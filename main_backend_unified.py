@@ -19,4 +19,4 @@ def index():
 
 if __name__ == "__main__":
     print("Starting Unified Jivo Dashboard on port 8004...")
-    uvicorn.run(app, host="192.168.1.212", port=8005)
+    uvicorn.run(app, host="localhost", port=8005)
