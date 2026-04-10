@@ -731,4 +731,4 @@ async def serve():
         return HTMLResponse(content=f.read())
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="192.168.1.7", port=8004)
+    uvicorn.run(app, host="192.168.1.212", port=8004)

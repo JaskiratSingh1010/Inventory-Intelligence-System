@@ -2,10 +2,10 @@ import os, math, traceback
 import pandas as pd
 import uvicorn
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse    
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from hdbcli import dbapi
+from hdbcli import dbapi    
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -540,4 +540,4 @@ async def serve():
         return HTMLResponse(content=f.read())
 
 if __name__=="__main__":
-    uvicorn.run(app,host="192.168.1.143",port=8004)
+    uvicorn.run(app,host="192.168.1.212",port=8004)
