@@ -250,7 +250,7 @@ def movers(days:int=Query(30),category:str=Query(None),subgroup:str=Query(None),
         WHERE N."OutQty">0 {date_filter} AND I."U_Unit"='OIL' GROUP BY N."ItemCode") MV ON M."ItemCode"=MV."ItemCode"
     WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."OnHand">0 {sg} {type_f} {GIFT_EXCL}
     GROUP BY G."ItmsGrpNam",M."ItemCode",M."ItemName",M."U_Sub_Group",M."U_TYPE",MV."TotalOut",MV."LastMoveDate"
-    ORDER BY COALESCE(MV."TotalOut",0) ASC,"StockValue" DESC""")}))
+    ORDER BY COALESCE(MV."TotalOut",0) ASC,"StockValue" DESC""")})
 
 @app.get("/api/not_billed_summary")
 def not_billed_summary(schema:str=Query("jivo_oil")):
