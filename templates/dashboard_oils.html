@@ -271,6 +271,8 @@ select.filter-sel{padding:5px 10px;border:2px solid var(--bd);border-radius:18px
    <button class="pl" data-c="PACKAGING MATERIAL">Packaging</button>
   </div>
   <button class="btn" onclick="load()">↻ Refresh</button>
+  <div class="sep"></div>
+  <button id="lockBtn" onclick="toggleLock()" title="Click to login" style="padding:5px 12px;font-size:13px;background:transparent;border:1.5px solid var(--bd);border-radius:10px;cursor:pointer;font-family:var(--font);color:var(--mt);transition:.15s;" onmouseenter="this.style.borderColor='var(--ac)';this.style.color='var(--ac)'" onmouseleave="this.style.borderColor='var(--bd)';this.style.color='var(--mt)'">🔒</button>
  </div>
 
  <div class="ct">
@@ -316,6 +318,9 @@ select.filter-sel{padding:5px 10px;border:2px solid var(--bd);border-radius:18px
      <button class="pl on" data-v="30">30d</button><button class="pl" data-v="60">60d</button><button class="pl" data-v="90">90d</button>
     </div>
     <div class="sep"></div>
+    <span style="font-size:12px;font-weight:700;color:var(--mt)">Days:</span>
+    <input type="number" id="mvDaysInput" min="1" placeholder="e.g. 45" style="width:80px;padding:4px 8px;font-size:12px;border:2px solid var(--bd);border-radius:8px;font-family:var(--font);outline:none" onkeydown="if(event.key==='Enter')mvApplyDaysInput()">
+    <div class="sep"></div>
     <span style="font-size:12px;font-weight:700;color:var(--mt)">From:</span>
     <input type="date" id="mvDateFrom" class="date-inp">
     <span style="font-size:12px;font-weight:700;color:var(--mt)">To:</span>
@@ -340,6 +345,16 @@ select.filter-sel{padding:5px 10px;border:2px solid var(--bd);border-radius:18px
     <div class="pls" id="moStatus"><button class="pl on" data-v="all">All</button><button class="pl" data-v="NON-MOVING">Non-Moving</button><button class="pl" data-v="SLOW">Slow</button><button class="pl" data-v="MEDIUM">Medium</button><button class="pl" data-v="FAST">Fast</button></div>
     <div class="sep"></div>
     <div class="pls" id="moTF"><button class="pl on" data-v="all">All Types</button><button class="pl premium" data-v="PREMIUM">Premium</button><button class="pl commodity" data-v="COMMODITY">Commodity</button></div>
+    <div class="sep"></div>
+    <span style="font-size:12px;font-weight:700;color:var(--mt)">Days:</span>
+    <input type="number" id="moDaysInput" min="1" placeholder="e.g. 45" style="width:80px;padding:4px 8px;font-size:12px;border:2px solid var(--bd);border-radius:8px;font-family:var(--font);outline:none" onkeydown="if(event.key==='Enter')moApplyDaysInput()">
+    <div class="sep"></div>
+    <span style="font-size:12px;font-weight:700;color:var(--mt)">From:</span>
+    <input type="date" id="moDateFrom" class="date-inp">
+    <span style="font-size:12px;font-weight:700;color:var(--mt)">To:</span>
+    <input type="date" id="moDateTo" class="date-inp">
+    <button onclick="moApplyDate()" style="padding:4px 12px;font-size:12px;font-weight:700;background:var(--ac);color:#fff;border:none;border-radius:8px;cursor:pointer;font-family:var(--font)">Apply</button>
+    <button onclick="moClearDate()" style="padding:4px 12px;font-size:12px;font-weight:700;background:#f4f4f5;color:var(--mt);border:none;border-radius:8px;cursor:pointer;font-family:var(--font)">Clear</button>
    </div>
    <div id="moK"></div>
    <div id="moN" class="note" style="display:none"></div>
@@ -355,6 +370,9 @@ select.filter-sel{padding:5px 10px;border:2px solid var(--bd);border-radius:18px
     <div class="pls" id="biP"><button class="pl on" data-v="30">30d</button><button class="pl" data-v="60">60d</button><button class="pl" data-v="90">90d</button></div>
     <div class="sep"></div>
     <div class="pls" id="biTF"><button class="pl on" data-v="all">All Types</button><button class="pl premium" data-v="PREMIUM">Premium</button><button class="pl commodity" data-v="COMMODITY">Commodity</button></div>
+    <div class="sep"></div>
+    <span style="font-size:12px;font-weight:700;color:var(--mt)">Days:</span>
+    <input type="number" id="biDaysInput" min="1" placeholder="e.g. 45" style="width:80px;padding:4px 8px;font-size:12px;border:2px solid var(--bd);border-radius:8px;font-family:var(--font);outline:none" onkeydown="if(event.key==='Enter')biApplyDaysInput()">
     <div class="sep"></div>
     <span style="font-size:12px;font-weight:700;color:var(--mt)">Custom range:</span>
     <input type="date" id="biDateFrom" class="date-inp">
@@ -488,7 +506,7 @@ Chart.defaults.font.family='Nunito';Chart.defaults.font.weight=600;Chart.default
 // ── STATE ──
 let S='dash',C='',SCH='jivo_oil',ch={},DIVISION='oils';
 let mvD_data=[],mvDays=30,mvCustomFrom='',mvCustomTo='';
-let moDays=30,moType='all',moStatusF='all',moSGData=[],moItemCache={},moRawCache={};
+let moDays=30,moType='all',moStatusF='all',moSGData=[],moItemCache={},moRawCache={},moDateFrom='',moDateTo='';
 let biDays=30,biType='all',biSGData=[],biItemCache={},biCustomFrom='',biCustomTo='';
 let abType='all',abComboF='all',abSGData=[],abItemCache={};
 let plD=[],plType='all',plAlertF='all';
@@ -499,6 +517,8 @@ let whAllData=[],whItemCache={};
 function F(n){if(n==null)return'–';n=+n;if(isNaN(n))return'–';let s=n<0?'-':'';n=Math.abs(n);if(n>=1e7)return s+'₹'+(n/1e7).toFixed(2)+' Cr';if(n>=1e5)return s+'₹'+(n/1e5).toFixed(2)+' L';if(n>=1e3)return s+'₹'+(n/1e3).toFixed(1)+'K';return s+'₹'+n.toLocaleString('en-IN')}
 function Fs(n){if(!n)return'0';n=+n;if(n>=1e7)return(n/1e7).toFixed(1)+'Cr';if(n>=1e5)return(n/1e5).toFixed(1)+'L';if(n>=1e3)return(n/1e3).toFixed(0)+'K';return n+''}
 function N(n){if(n==null)return'–';return(+n).toLocaleString('en-IN')}
+function FV(n){return`<span class="inv-val-wrap" onclick="showLoginModal()"><span class="inv-val">${F(n)}</span><span class="inv-lock">🔒</span></span>`}
+function FsV(n){return`<span class="inv-val-wrap" onclick="showLoginModal()"><span class="inv-val">${Fs(n)}</span><span class="inv-lock">🔒</span></span>`}
 
 const RECLASSIFY_RULES=[
   {keyword:'YELLOW MUSTARD',type:'PREMIUM'},{keyword:'EXTRA VIRGIN COCONUT',type:'PREMIUM'},
@@ -573,15 +593,15 @@ async function lD(){
   const nm=ms.find(x=>x.Status==='NON-MOVING')||{Count:0,Value:0};
   const b30=bi.find(x=>x.Period==='30 Days')||{NotBilledSKUs:0,NotBilledValue:0};
   document.getElementById('dK').innerHTML=`<div class="kg">
-   <div class="kc k1" onclick="drillStock()"><div class="kc-l">Total Inventory Value</div><div class="kc-v">${F(k.TotalValue)}</div><div class="kc-s">${N(k.TotalSKUs)} items in stock · Click to drill</div><div class="kc-bg">💰</div></div>
+   <div class="kc k1" onclick="drillStock()"><div class="kc-l">Total Inventory Value</div><div class="kc-v">${FV(k.TotalValue)}</div><div class="kc-s">${N(k.TotalSKUs)} items in stock · Click to drill</div><div class="kc-bg">💰</div></div>
    <div class="kc k2" onclick="drillStock()"><div class="kc-l">Total Stock Quantity</div><div class="kc-v">${N(k.TotalQty)}</div><div class="kc-s">Units across all warehouses</div><div class="kc-bg">📦</div></div>
    <div class="kc k3" onclick="drillOOS()"><div class="kc-l">Out of Stock SKUs</div><div class="kc-v">${N(k.OutOfStockSKUs)}</div><div class="kc-s">Zero stock · Click for list</div><div class="kc-bg">⚠️</div></div>
-   <div class="kc k4" onclick="goTo('movers')"><div class="kc-l">Non-Moving (30d)</div><div class="kc-v">${N(nm.Count)}</div><div class="kc-s">${F(nm.Value)} capital stuck</div><div class="kc-bg">🔒</div></div>
-   <div class="kc k5" onclick="goTo('billing')"><div class="kc-l">FG Not Billed (30d)</div><div class="kc-v">${N(b30.NotBilledSKUs)}</div><div class="kc-s">${F(b30.NotBilledValue)} unbilled</div><div class="kc-bg">🧾</div></div>
+   <div class="kc k4" onclick="goTo('movers')"><div class="kc-l">Non-Moving (30d)</div><div class="kc-v">${N(nm.Count)}</div><div class="kc-s">${FV(nm.Value)} capital stuck</div><div class="kc-bg">🔒</div></div>
+   <div class="kc k5" onclick="goTo('billing')"><div class="kc-l">FG Not Billed (30d)</div><div class="kc-v">${N(b30.NotBilledSKUs)}</div><div class="kc-s">${FV(b30.NotBilledValue)} unbilled</div><div class="kc-bg">🧾</div></div>
   </div>`;
   const nt=document.getElementById('dN');let ins=[];
-  if(nm.Count>0)ins.push(`<b>${N(nm.Count)} items (${F(nm.Value)})</b> — zero movement in 30 days`);
-  if(b30.NotBilledSKUs>0)ins.push(`<b>${N(b30.NotBilledSKUs)} finished goods (${F(b30.NotBilledValue)})</b> — not invoiced in 30 days`);
+  if(nm.Count>0)ins.push(`<b>${N(nm.Count)} items (${FV(nm.Value)})</b> — zero movement in 30 days`);
+  if(b30.NotBilledSKUs>0)ins.push(`<b>${N(b30.NotBilledSKUs)} finished goods (${FV(b30.NotBilledValue)})</b> — not invoiced in 30 days`);
   if(ins.length){nt.style.display='';nt.innerHTML='<b>⚠ Attention Required:</b><br>'+ins.join('<br>')}else{nt.style.display='none'}
   mc('cPie',{type:'doughnut',data:{labels:cat.map(c=>c.Category),datasets:[{data:cat.map(c=>c.Value||0),backgroundColor:['#6366f1','#f59e0b','#06b6d4'],borderWidth:3,borderColor:'#fff',borderRadius:6,hoverOffset:8}]},
    options:{responsive:true,maintainAspectRatio:false,cutout:'60%',plugins:{legend:{position:'bottom',labels:{font:{size:12,weight:700,family:'Nunito'},padding:12,usePointStyle:true}},datalabels:{display:true,color:'#fff',font:{weight:800,size:13,family:'Nunito'},formatter:(v,c)=>{const t=c.dataset.data.reduce((a,b)=>a+b,0);return t>0?Math.round(v/t*100)+'%':''}}}}});
@@ -597,7 +617,7 @@ async function lD(){
 function goTo(s){document.querySelectorAll('.ni').forEach(x=>{x.classList.remove('on');if(x.dataset.s===s)x.classList.add('on')});document.querySelectorAll('.sec').forEach(x=>x.classList.remove('on'));S=s;document.getElementById('s-'+s).classList.add('on');document.getElementById('pt').textContent=document.querySelector(`.ni[data-s="${s}"]`).textContent.trim();load()}
 async function drillStock(){oM('Stock Position');document.getElementById('mB').innerHTML='<div class="ld">Loading...</div>';const d=await api('/api/stock_position'+(C?'?category='+encodeURIComponent(C):''));document.getElementById('mB').innerHTML=d.length?mkT(d):'<div class="em">No items</div>'}
 async function drillOOS(){oM('Out of Stock SKUs');document.getElementById('mB').innerHTML='<div class="ld">Loading...</div>';const d=await api('/api/out_of_stock'+(C?'?category='+encodeURIComponent(C):''));document.getElementById('mB').innerHTML=d.length?`<table><thead><tr><th>Category</th><th>Item Code</th><th>Item Name</th><th class="R">On Hand</th></tr></thead><tbody>`+d.map(r=>`<tr><td>${r.Category}</td><td class="m">${r.ItemCode}</td><td>${r.ItemName}</td><td class="R m">${N(r.TotalOnHand)}</td></tr>`).join('')+'</tbody></table>':'<div class="em">No out of stock</div>'}
-function mkT(d){return`<table><thead><tr><th>Category</th><th>Item Code</th><th>Item Name</th><th>WH</th><th>Owner</th><th class="R">On Hand</th><th class="R">Committed</th><th class="R">On Order</th><th class="R">Available</th><th class="R">Value</th></tr></thead><tbody>`+d.map(r=>`<tr><td>${r.Category||''}</td><td class="m">${r.ItemCode}</td><td>${r.ItemName}</td><td class="m">${r.WhsCode}</td><td>${r.OwnerName||'–'}</td><td class="R m">${N(r.OnHand)}</td><td class="R m">${N(r.Committed)}</td><td class="R m">${N(r.OnOrder)}</td><td class="R m">${N(r.Available)}</td><td class="R m">${F(r.StockValue)}</td></tr>`).join('')+'</tbody></table>'}
+function mkT(d){return`<table><thead><tr><th>Category</th><th>Item Code</th><th>Item Name</th><th>WH</th><th>Owner</th><th class="R">On Hand</th><th class="R">On Order</th><th class="R">Available</th><th class="R">Value</th></tr></thead><tbody>`+d.map(r=>`<tr><td>${r.Category||''}</td><td class="m">${r.ItemCode}</td><td>${r.ItemName}</td><td class="m">${r.WhsCode}</td><td>${r.OwnerName||'–'}</td><td class="R m">${N(r.OnHand)}</td><td class="R m">${N(r.OnOrder)}</td><td class="R m">${N(r.Available)}</td><td class="R m">${FV(r.StockValue)}</td></tr>`).join('')+'</tbody></table>'}
 
 // ════ MERGED WAREHOUSE + STOCK ════
 async function lWHStock(){
@@ -638,7 +658,7 @@ function renderWhTable(data){
    <th style="width:20px"></th>
    <th>Warehouse Code</th><th>Warehouse Name</th><th>Owner</th>
    <th class="R">SKUs</th><th class="R">Qty</th><th class="R">On Order</th>
-   <th class="R">Committed</th><th class="R">Value</th>
+   <th class="R">Value</th>
   </tr></thead><tbody>`;
   data.forEach((v,idx)=>{
     const vid=`wh-${v.WhsCode.replace(/[^a-z0-9]/gi,'_')}`;
@@ -650,10 +670,9 @@ function renderWhTable(data){
      <td class="R m">${N(v.SKUs)}</td>
      <td class="R m">${N(v.Qty)}</td>
      <td class="R m" style="color:#4f46e5">${N(v.OnOrder)}</td>
-     <td class="R m" style="color:#d97706">${N(v.Committed)}</td>
-     <td class="R m" style="font-weight:800;color:#059669">${F(v.Value)}</td>
+     <td class="R m" style="font-weight:800;color:#059669">${FV(v.Value)}</td>
     </tr>
-    <tr class="wh-items-row" id="${vid}-items"><td colspan="9">
+    <tr class="wh-items-row" id="${vid}-items"><td colspan="8">
      <div class="wh-items-inner" id="${vid}-inner"><div class="ld" style="padding:10px">Loading items...</div></div>
     </td></tr>`;
   });
@@ -678,7 +697,7 @@ async function whToggle(whsCode,vid,row){
    </div>
    <table><thead><tr>
     <th>Category</th><th>Item Code</th><th>Item Name</th><th>Sub-Group</th><th>Type</th>
-    <th class="R">On Hand</th><th class="R">Committed</th><th class="R">On Order</th>
+    <th class="R">On Hand</th><th class="R">On Order</th>
     <th class="R">Available</th><th class="R">Value</th>
    </tr></thead><tbody>`+
    d.map(r=>`<tr>
@@ -688,10 +707,9 @@ async function whToggle(whsCode,vid,row){
     <td style="font-size:11px;color:var(--mt)">${r.SubGroup||'–'}</td>
     <td>${typBadge(r.ItemType,r.ItemName)}</td>
     <td class="R m">${N(r.OnHand)}</td>
-    <td class="R m" style="color:#d97706">${N(r.Committed)}</td>
     <td class="R m" style="color:#4f46e5">${N(r.OnOrder)}</td>
     <td class="R m" style="color:${(r.Available||0)<0?'#dc2626':'#059669'}">${N(r.Available)}</td>
-    <td class="R m" style="font-weight:800">${F(r.StockValue)}</td>
+    <td class="R m" style="font-weight:800">${FV(r.StockValue)}</td>
    </tr>`).join('')+'</tbody></table>':
    '<div class="em" style="padding:12px">No items in this warehouse</div>';
   whItemCache[whsCode]=html;inner.innerHTML=html;
@@ -718,7 +736,7 @@ async function lMVFetch(){
   document.getElementById('mvH').textContent=`Daily Movement — ${label}`;
   const tI=mvD_data.reduce((s,x)=>s+(x.InValue||0),0),tO=mvD_data.reduce((s,x)=>s+(x.OutValue||0),0);
   const nt=document.getElementById('mvN');nt.style.display='';
-  nt.innerHTML=mvD_data.length?`<b>Summary:</b> In: ${F(tI)} · Out: ${F(tO)} · Net: ${F(tI-tO)}`:'<b>No data</b>';
+  nt.innerHTML=mvD_data.length?`<b>Summary:</b> In: ${FV(tI)} · Out: ${FV(tO)} · Net: ${FV(tI-tO)}`:'<b>No data</b>';
   rMV();
 }
 function mvApplyDate(){
@@ -749,15 +767,15 @@ function rMV(){
     <td class="m">${r.ItemCode||''}</td>
     <td>${r.ItemName||''}</td>
     <td class="R m">${N(r.InQty)}</td><td class="R m">${N(r.OutQty)}</td>
-    <td class="R m">${F(r.InValue)}</td><td class="R m">${F(r.OutValue)}</td>
-    <td class="R m" style="color:${(r.InValue||0)-(r.OutValue||0)>=0?'#059669':'#ef4444'}">${F((r.InValue||0)-(r.OutValue||0))}</td>
+    <td class="R m">${FV(r.InValue)}</td><td class="R m">${FV(r.OutValue)}</td>
+    <td class="R m" style="color:${(r.InValue||0)-(r.OutValue||0)>=0?'#059669':'#ef4444'}">${FV((r.InValue||0)-(r.OutValue||0))}</td>
    </tr>`).join('')+'</tbody></table>':
    '<div class="em">No data</div>';
 }
 
 // ════ MOVERS ════
 async function lMO(){
-  pg('moP',v=>{moDays=+v;moItemCache={};moRawCache={};lMO()});
+  pg('moP',v=>{moDays=+v;moItemCache={};moRawCache={};moDateFrom='';moDateTo='';if(document.getElementById('moDateFrom'))document.getElementById('moDateFrom').value='';if(document.getElementById('moDateTo'))document.getElementById('moDateTo').value='';lMO()});
   pg('moStatus',v=>{
     const openRow=document.querySelector('#moTableWrap .cat-row.open');
     const openSG=openRow?openRow.querySelector('td:nth-child(2)')?.textContent:null;
@@ -776,25 +794,33 @@ async function lMO(){
     }
   });
   pg('moTF',v=>{moType=v;moItemCache={};moRawCache={};lMOSGs()});
-  const sum=await api(`/api/movers_summary?days=${moDays}`+(C?'&category='+encodeURIComponent(C):''));
+  const moDtP=moDateFrom&&moDateTo?`&date_from=${moDateFrom}&date_to=${moDateTo}`:'';
+  const sum=await api(`/api/movers_summary?days=${moDays}`+(C?'&category='+encodeURIComponent(C):'')+moDtP);
   const g=s=>sum.find(x=>x.Status===s)||{Count:0,Value:0};
   const nm=g('NON-MOVING'),sl=g('SLOW'),md=g('MEDIUM'),fa=g('FAST');
+  const moLabel=moDateFrom&&moDateTo?`${moDateFrom} → ${moDateTo}`:`${moDays}d`;
   document.getElementById('moK').innerHTML=`<div class="kg">
-   <div class="kc k3"><div class="kc-l">Non-Moving (${moDays}d)</div><div class="kc-v">${N(nm.Count)}</div><div class="kc-s">${F(nm.Value)} stuck</div><div class="kc-bg">🔒</div></div>
-   <div class="kc k4"><div class="kc-l">Slow</div><div class="kc-v">${N(sl.Count)}</div><div class="kc-s">${F(sl.Value)}</div><div class="kc-bg">🐌</div></div>
-   <div class="kc k1"><div class="kc-l">Medium</div><div class="kc-v">${N(md.Count)}</div><div class="kc-s">${F(md.Value)}</div><div class="kc-bg">⚡</div></div>
-   <div class="kc k2"><div class="kc-l">Fast</div><div class="kc-v">${N(fa.Count)}</div><div class="kc-s">${F(fa.Value)}</div><div class="kc-bg">🚀</div></div>
+   <div class="kc k3"><div class="kc-l">Non-Moving (${moLabel})</div><div class="kc-v">${N(nm.Count)}</div><div class="kc-s">${FV(nm.Value)} stuck</div><div class="kc-bg">🔒</div></div>
+   <div class="kc k4"><div class="kc-l">Slow</div><div class="kc-v">${N(sl.Count)}</div><div class="kc-s">${FV(sl.Value)}</div><div class="kc-bg">🐌</div></div>
+   <div class="kc k1"><div class="kc-l">Medium</div><div class="kc-v">${N(md.Count)}</div><div class="kc-s">${FV(md.Value)}</div><div class="kc-bg">⚡</div></div>
+   <div class="kc k2"><div class="kc-l">Fast</div><div class="kc-v">${N(fa.Count)}</div><div class="kc-s">${FV(fa.Value)}</div><div class="kc-bg">🚀</div></div>
   </div>`;
   const nt=document.getElementById('moN');
-  if(nm.Count>0){nt.style.display='';nt.innerHTML=`<b>⚠ ${N(nm.Count)} items</b> — ZERO movement in ${moDays} days — <b>${F(nm.Value)}</b> stuck.`}else{nt.style.display='none'}
+  if(nm.Count>0){nt.style.display='';nt.innerHTML=`<b>⚠ ${N(nm.Count)} items</b> — ZERO movement in ${moLabel} — <b>${FV(nm.Value)}</b> stuck.`}else{nt.style.display='none'}
   await lMOSGs();
 }
 async function lMOSGs(){
   const cat=C||'FINISHED';
   const t=moType!=='all'?`&item_type=${moType}`:'';
-  moSGData=await api(`/api/movers_by_subgroup?days=${moDays}&category=${encodeURIComponent(cat)}${t}`);
+  const moDtP=moDateFrom&&moDateTo?`&date_from=${moDateFrom}&date_to=${moDateTo}`:'';
+  moSGData=await api(`/api/movers_by_subgroup?days=${moDays}&category=${encodeURIComponent(cat)}${t}${moDtP}`);
   moItemCache={};renderMoTable();
 }
+function moApplyDate(){moDateFrom=document.getElementById('moDateFrom').value;moDateTo=document.getElementById('moDateTo').value;if(moDateFrom&&moDateTo){moItemCache={};moRawCache={};lMO()}}
+function moClearDate(){moDateFrom='';moDateTo='';document.getElementById('moDateFrom').value='';document.getElementById('moDateTo').value='';moItemCache={};moRawCache={};lMO()}
+function moApplyDaysInput(){const n=parseInt(document.getElementById('moDaysInput').value);if(!n||n<1)return;const t=new Date(),f=new Date(t);f.setDate(f.getDate()-n);const fmt=d=>d.toISOString().slice(0,10);document.getElementById('moDateFrom').value=fmt(f);document.getElementById('moDateTo').value=fmt(t);moApplyDate()}
+function mvApplyDaysInput(){const n=parseInt(document.getElementById('mvDaysInput').value);if(!n||n<1)return;const t=new Date(),f=new Date(t);f.setDate(f.getDate()-n);const fmt=d=>d.toISOString().slice(0,10);document.getElementById('mvDateFrom').value=fmt(f);document.getElementById('mvDateTo').value=fmt(t);mvApplyDate()}
+function biApplyDaysInput(){const n=parseInt(document.getElementById('biDaysInput').value);if(!n||n<1)return;const t=new Date(),f=new Date(t);f.setDate(f.getDate()-n);const fmt=d=>d.toISOString().slice(0,10);document.getElementById('biDateFrom').value=fmt(f);document.getElementById('biDateTo').value=fmt(t);biApplyCustomDate()}
 function renderMoTable(){
   const wrap=document.getElementById('moTableWrap');
   if(!moSGData.length){wrap.innerHTML='<div class="em">No data</div>';document.getElementById('moC').textContent='0';return}
@@ -814,8 +840,8 @@ function renderMoTable(){
      <td class="R m" style="color:#f59e0b">${N(v.SlowSKUs)}</td>
      <td class="R m" style="color:#6366f1">${N(v.MediumSKUs)}</td>
      <td class="R m" style="color:#10b981">${N(v.FastSKUs)}</td>
-     <td class="R m">${Fs(v.StockValue)}</td>
-     <td class="R m" style="color:${v.StuckValue>0?'#dc2626':'var(--mt)'}">${v.StuckValue>0?Fs(v.StuckValue):'–'}</td>
+     <td class="R m">${FsV(v.StockValue)}</td>
+     <td class="R m" style="color:${v.StuckValue>0?'#dc2626':'var(--mt)'}">${v.StuckValue>0?FsV(v.StuckValue):'–'}</td>
     </tr>
     <tr class="cat-items-row" id="mo-items-${idx}"><td colspan="9"><div class="cat-items-inner" id="mo-inner-${idx}"><div class="ld" style="padding:12px">Loading...</div></div></td></tr>`;
   });
@@ -831,7 +857,7 @@ function buildMoItemsHtml(filtered){
     <td class="m">${r.ItemCode}</td><td>${r.ItemName||''}</td>
     <td class="R m">${N(r.TotalOnHand)}</td>
     <td class="R m">${N(r['Out'+moDays+'d'])}</td>
-    <td class="R m">${F(r.StockValue)}</td>
+    <td class="R m">${FV(r.StockValue)}</td>
     <td class="R m">${r.DaysOfStockLeft<0?'∞':N(r.DaysOfStockLeft)}</td>
     <td class="m">${r.LastMoveDate||'<span style="color:#dc2626">Never</span>'}</td>
     <td><button class="trace-btn" onclick="goToTrace('${r.ItemCode}','${(r.ItemName||'').replace(/'/g,"\\'")}')">🔍 Trace</button></td>
@@ -851,7 +877,8 @@ async function moToggleSG(sg,idx,row){
   }
   const cat=C||'FINISHED';
   const t=moType!=='all'?`&item_type=${moType}`:'';
-  const d=await api(`/api/movers?days=${moDays}&category=${encodeURIComponent(cat)}&subgroup=${encodeURIComponent(sg)}${t}`);
+  const moDtP2=moDateFrom&&moDateTo?`&date_from=${moDateFrom}&date_to=${moDateTo}`:'';
+  const d=await api(`/api/movers?days=${moDays}&category=${encodeURIComponent(cat)}&subgroup=${encodeURIComponent(sg)}${t}${moDtP2}`);
   moRawCache[sg]=d;
   const filtered=moStatusF!=='all'?d.filter(r=>r.MovementStatus===moStatusF):d;
   inner.innerHTML=buildMoItemsHtml(filtered);
@@ -875,17 +902,18 @@ async function lBI(){
   pg('biP',v=>{biDays=+v;biCustomFrom='';biCustomTo='';biItemCache={};lBI()});
   pg('biTF',v=>{biType=v;biItemCache={};lBISGs()});
   const sum=await api('/api/not_billed_summary');
-  document.getElementById('biK').innerHTML=`<div class="kg">`+sum.map((s,i)=>`<div class="kc k${i===0?3:i===1?4:1}"><div class="kc-l">FG Not Billed · ${s.Period}</div><div class="kc-v">${N(s.NotBilledSKUs)}</div><div class="kc-s">${F(s.NotBilledValue)}</div><div class="kc-bg">🧾</div></div>`).join('')+'</div>';
+  document.getElementById('biK').innerHTML=`<div class="kg">`+sum.map((s,i)=>`<div class="kc k${i===0?3:i===1?4:1}"><div class="kc-l">FG Not Billed · ${s.Period}</div><div class="kc-v">${N(s.NotBilledSKUs)}</div><div class="kc-s">${FV(s.NotBilledValue)}</div><div class="kc-bg">🧾</div></div>`).join('')+'</div>';
   const c=sum.find(s=>s.Period===biDays+' Days')||{};
   const nt=document.getElementById('biN');
-  if(c.NotBilledSKUs>0){nt.style.display='';nt.innerHTML=`<b>⚠ ${N(c.NotBilledSKUs)} finished goods</b> worth <b>${F(c.NotBilledValue)}</b> — not invoiced in ${biDays} days <i style="font-size:11px">(items created &lt;30d excluded)</i>`}else{nt.style.display='none'}
+  if(c.NotBilledSKUs>0){nt.style.display='';nt.innerHTML=`<b>⚠ ${N(c.NotBilledSKUs)} finished goods</b> worth <b>${FV(c.NotBilledValue)}</b> — not invoiced in ${biDays} days <i style="font-size:11px">(items created &lt;30d excluded)</i>`}else{nt.style.display='none'}
   await lBISGs();
 }
 function biApplyCustomDate(){biCustomFrom=document.getElementById('biDateFrom').value;biCustomTo=document.getElementById('biDateTo').value;if(biCustomFrom&&biCustomTo){biItemCache={};lBISGs()}}
 function biClearCustomDate(){biCustomFrom='';biCustomTo='';document.getElementById('biDateFrom').value='';document.getElementById('biDateTo').value='';biItemCache={};lBISGs()}
 async function lBISGs(){
   const t=biType!=='all'?`&item_type=${biType}`:'';
-  biSGData=await api(`/api/not_billed_by_subgroup?days=${biDays}${t}`);
+  const biDtP=biCustomFrom&&biCustomTo?`&date_from=${biCustomFrom}&date_to=${biCustomTo}`:'';
+  biSGData=await api(`/api/not_billed_by_subgroup?days=${biDays}${t}${biDtP}`);
   biItemCache={};renderBiTable();
 }
 function renderBiTable(){
@@ -902,8 +930,8 @@ function renderBiTable(){
      <td style="font-weight:700">${v.SubGroup}</td>
      <td class="R m">${N(v.TotalSKUs)}</td>
      <td class="R m" style="color:#ef4444">${N(v.NotBilledSKUs)}</td>
-     <td class="R m">${Fs(v.TotalValue)}</td>
-     <td class="R m" style="color:#dc2626">${Fs(v.NotBilledValue)}</td>
+     <td class="R m">${FsV(v.TotalValue)}</td>
+     <td class="R m" style="color:#dc2626">${FsV(v.NotBilledValue)}</td>
      <td><button class="dr" onclick="biToggleSG('${v.SubGroup.replace(/'/g,"\\'")}',${idx},this)">View Items →</button></td>
     </tr>`;
   });
@@ -924,7 +952,7 @@ async function biToggleSG(sg,idx,row){
    d.map(r=>`<tr>
     <td>${typBadge(r.ItemType)}</td>
     <td class="m">${r.ItemCode}</td><td>${r.ItemName||''}</td>
-    <td class="R m">${N(r.CurrentStock)}</td><td class="R m">${F(r.StockValue)}</td>
+    <td class="R m">${N(r.CurrentStock)}</td><td class="R m">${FV(r.StockValue)}</td>
     <td class="m">${r.LastBillDate||'<span style="color:#dc2626">Never</span>'}</td>
     <td class="m">${r.LastBilledAgo||'–'}</td>
     <td>${r.LastCustomer||'–'}</td>
@@ -945,9 +973,9 @@ async function lABCXYZ(){
   ['AX','AZ','BX','CX','CZ'].forEach(c=>{const d=sm[c]||{skus:0,value:0};document.getElementById(`k${c}-s`).textContent=`${N(d.skus)} SKUs`;document.getElementById(`k${c}-v`).textContent=F(d.value)});
   const ax=sm['AX']||{},az=sm['AZ']||{},cz=sm['CZ']||{};
   const nt=document.getElementById('abN');const ins=[];
-  if(ax.skus>0)ins.push(`<b>${N(ax.skus)} AX items (${F(ax.value)})</b> — high-value stable demand`);
-  if(az.skus>0)ins.push(`<b>${N(az.skus)} AZ items (${F(az.value)})</b> — high-value erratic: review urgently`);
-  if(cz.skus>0)ins.push(`<b>${N(cz.skus)} CZ items (${F(cz.value)})</b> — elimination candidates`);
+  if(ax.skus>0)ins.push(`<b>${N(ax.skus)} AX items (${FV(ax.value)})</b> — high-value stable demand`);
+  if(az.skus>0)ins.push(`<b>${N(az.skus)} AZ items (${FV(az.value)})</b> — high-value erratic: review urgently`);
+  if(cz.skus>0)ins.push(`<b>${N(cz.skus)} CZ items (${FV(cz.value)})</b> — elimination candidates`);
   if(ins.length){nt.style.display='';nt.innerHTML='<b>⚠ Insights:</b><br>'+ins.join('<br>')}else{nt.style.display='none'}
   await lABSGs();
 }
@@ -1027,7 +1055,7 @@ function buildAbItemsHtml(rows){
      <td><span class="bd" style="background:${CC[r.ABCXYZClass]||'#f3f4f6'};color:${CT[r.ABCXYZClass]||'#374151'}">${r.ABCXYZClass}</span></td>
      <td>${typBadge(r.ItemType,r.ItemName)}</td><td class="m">${r.Rank}</td>
      <td class="m">${r.ItemCode}</td><td>${r.ItemName||''}</td>
-     <td class="R m">${N(r.TotalOnHand)}</td><td class="R m">${F(r.StockValue)}</td>
+     <td class="R m">${N(r.TotalOnHand)}</td><td class="R m">${FV(r.StockValue)}</td>
      <td class="R m">${N(r.AvgMonthlyOut)}</td><td class="R m">${cov}</td><td class="R m">${r.CumulativePct}%</td>
      <td><button class="trace-btn" onclick="goToTrace('${r.ItemCode}','${(r.ItemName||'').replace(/'/g,"\\'")}')">🔍 Trace</button></td>
     </tr>`;
@@ -1048,7 +1076,7 @@ function renderAbTable(){
      <td class="R m" style="color:#059669">${N(v.X_Count)}</td>
      <td class="R m" style="color:#d97706">${N(v.Y_Count)}</td>
      <td class="R m" style="color:#dc2626">${N(v.Z_Count)}</td>
-     <td class="R m">${Fs(v.StockValue)}</td>
+     <td class="R m">${FsV(v.StockValue)}</td>
     </tr>
     <tr class="cat-items-row" id="ab-items-${idx}"><td colspan="10"><div class="cat-items-inner" id="ab-inner-${idx}"><div class="ld" style="padding:12px">Loading...</div></div></td></tr>`;
   });
@@ -1083,7 +1111,7 @@ async function lAG(){const d=await api('/api/aging'+(C?'?category='+encodeURICom
  document.getElementById('agT').innerHTML=d.length?
   `<table><thead><tr><th>Category</th><th>Bucket</th><th class="R">Items</th><th class="R">Qty</th><th class="R">Value</th><th></th></tr></thead><tbody>`+
   d.map(r=>{const cl=r.Bucket==='0-30'?'b-ok':r.Bucket==='90+'?'b-d':'b-w';
-   return`<tr><td>${r.Category}</td><td><span class="bd ${cl}">${r.Bucket}d sitting</span></td><td class="R m">${N(r.Items)}</td><td class="R m">${N(r.Qty)}</td><td class="R m">${F(r.Value)}</td>
+   return`<tr><td>${r.Category}</td><td><span class="bd ${cl}">${r.Bucket}d sitting</span></td><td class="R m">${N(r.Items)}</td><td class="R m">${N(r.Qty)}</td><td class="R m">${FV(r.Value)}</td>
     <td><button class="dr" onclick="drAg('${r.Bucket}','${r.Category}')">View →</button></td></tr>`}).join('')+'</tbody></table>':
   '<div class="em">No data</div>'}
 
@@ -1100,7 +1128,7 @@ async function drAg(b,c){
   d.map(r=>`<tr><td class="m">${r.ItemCode}</td><td>${r.ItemName||''}</td><td class="m">${r.WhsCode||''}</td>
    <td class="m">${r.FirstReceiptDate||''}</td>
    <td class="R m" style="color:${r.DaysSitting>90?'#dc2626':r.DaysSitting>60?'#d97706':'#059669'}">${N(r.DaysSitting)}d</td>
-   <td class="R m">${N(r.Qty)}</td><td class="R m">${F(r.Value)}</td>
+   <td class="R m">${N(r.Qty)}</td><td class="R m">${FV(r.Value)}</td>
    <td><button class="trace-btn" onclick="xM();goToTrace('${r.ItemCode}','${(r.ItemName||'').replace(/'/g,"\\'")}')">🔍 Trace</button></td>
   </tr>`).join('')+'</tbody></table>':
   '<div class="em">No items</div>'
@@ -1180,7 +1208,7 @@ async function traceLoadDetail(){
     api(`/api/trace_header?item=${encodeURIComponent(code)}`),
     api(logUrl),
     isFG?api(`/api/trace_returns?item=${encodeURIComponent(code)}`+(traceMonth?`&month=${traceMonth}`:traceDays>0?`&days=${traceDays}`:'')):Promise.resolve([]),
-    isFG?api(`/api/trace_disassembly?item=${encodeURIComponent(code)}&days=${traceDays}`):Promise.resolve([])
+    isFG?api(`/api/trace_disassembly?item=${encodeURIComponent(code)}&days=${traceDays}`+(traceMonth?`&month=${traceMonth}`:'')):Promise.resolve([])
   ]);
   const h=hdr[0]||{};
   const totalIn=log.reduce((s,r)=>s+(+r.InQty||0),0);
@@ -1209,10 +1237,9 @@ async function traceLoadDetail(){
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap">
      <div style="background:#d1fae5;color:#065f46;border-radius:9px;padding:10px 16px;text-align:center;min-width:80px"><div style="font-size:18px;font-weight:800">${N(h.TotalOnHand)}</div><div style="font-size:9px;font-weight:800;text-transform:uppercase;margin-top:2px;opacity:.7">On Hand</div></div>
-     <div style="background:#fef3c7;color:#92400e;border-radius:9px;padding:10px 16px;text-align:center;min-width:80px"><div style="font-size:18px;font-weight:800">${N(h.TotalCommitted)}</div><div style="font-size:9px;font-weight:800;text-transform:uppercase;margin-top:2px;opacity:.7">Committed</div></div>
      ${isFG?`<div style="background:#fee2e2;color:#991b1b;border-radius:9px;padding:10px 16px;text-align:center;min-width:80px"><div style="font-size:18px;font-weight:800">${N(Math.round(totalRet))}</div><div style="font-size:9px;font-weight:800;text-transform:uppercase;margin-top:2px;opacity:.7">Returned</div></div>`:''}
      ${isFG?`<div style="background:#ede9fe;color:#4c1d95;border-radius:9px;padding:10px 16px;text-align:center;min-width:80px"><div style="font-size:18px;font-weight:800">${disasm.length}</div><div style="font-size:9px;font-weight:800;text-transform:uppercase;margin-top:2px;opacity:.7">Disassembled</div></div>`:''}
-     <div style="background:#dbeafe;color:#1e40af;border-radius:9px;padding:10px 16px;text-align:center;min-width:80px"><div style="font-size:18px;font-weight:800">${F(h.StockValue)}</div><div style="font-size:9px;font-weight:800;text-transform:uppercase;margin-top:2px;opacity:.7">Value</div></div>
+     <div style="background:#dbeafe;color:#1e40af;border-radius:9px;padding:10px 16px;text-align:center;min-width:80px"><div style="font-size:18px;font-weight:800">${FV(h.StockValue)}</div><div style="font-size:9px;font-weight:800;text-transform:uppercase;margin-top:2px;opacity:.7">Value</div></div>
     </div>
    </div>
   </div>
@@ -1260,7 +1287,7 @@ async function traceLoadDetail(){
    <div class="tc"><div class="tb"><h3>↩️ Returns After Sale</h3><span class="cnt">${returns.length} returns · ${N(Math.round(totalRet))} units</span></div>
    <div class="ts" style="max-height:500px">${returns.length?
     `<table><thead><tr><th>Date</th><th>Type</th><th>Customer</th><th>Warehouse</th><th class="R">Qty</th><th class="R">Value</th><th>Memo</th></tr></thead><tbody>`+
-    returns.map(r=>`<tr><td class="m">${r.DocDate||'–'}</td><td><span style="padding:2px 7px;border-radius:6px;font-size:10px;font-weight:800;background:#fee2e2;color:#991b1b">${r.ReturnType}</span></td><td>${r.CardName||'–'}</td><td class="m">${r.Warehouse||'–'}</td><td class="R m" style="color:#dc2626;font-weight:800">+${N(r.ReturnQty)}</td><td class="R m">${F(r.TransValue)}</td><td style="font-size:12px;color:var(--tx2)">${r.JrnlMemo||'–'}</td></tr>`).join('')+'</tbody></table>':
+    returns.map(r=>`<tr><td class="m">${r.DocDate||'–'}</td><td><span style="padding:2px 7px;border-radius:6px;font-size:10px;font-weight:800;background:#fee2e2;color:#991b1b">${r.ReturnType}</span></td><td>${r.CardName||'–'}</td><td class="m">${r.Warehouse||'–'}</td><td class="R m" style="color:#dc2626;font-weight:800">+${N(r.ReturnQty)}</td><td class="R m">${FV(r.TransValue)}</td><td style="font-size:12px;color:var(--tx2)">${r.JrnlMemo||'–'}</td></tr>`).join('')+'</tbody></table>':
     '<div class="em">No returns found</div>'}
    </div></div>
   </div>
@@ -1307,7 +1334,7 @@ function traceBuildTable(rows){
     <td style="font-size:11px;color:var(--mt);max-width:120px">${ref}</td>
     <td class="R m" style="color:${isIn?'#059669':'var(--mt)'}">${isIn?'+'+N(r.InQty):'–'}</td>
     <td class="R m" style="color:${isOut?'#dc2626':'var(--mt)'}">${isOut?'-'+N(r.OutQty):'–'}</td>
-    <td class="R m">${r.TransValue?F(r.TransValue):'–'}</td>
+    <td class="R m">${r.TransValue?FV(r.TransValue):'–'}</td>
     <td style="font-size:11px;color:var(--mt);max-width:130px">${r.Comments||'–'}</td></tr>`}).join('')}</tbody></table>`;
 }
 function traceTab(name,el){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));document.querySelectorAll('.tab-pane').forEach(t=>t.classList.remove('on'));el.classList.add('on');document.getElementById('trace-tab-'+name).classList.add('on')}
@@ -1390,7 +1417,7 @@ function rPlan(){
      <td class="R m">${r.AvgDailyOut!=null?(+r.AvgDailyOut).toFixed(1):'–'}</td>
      <td class="R">${dslDisplay}</td>
      <td class="R m" style="color:#4f46e5;font-weight:800">${(r.SuggestedOrder>0)?N(r.SuggestedOrder):'<span style="color:var(--mt)">–</span>'}</td>
-     <td>${trendBadge(r.Trend)}</td><td class="R m">${F(r.StockValue)}</td>
+     <td>${trendBadge(r.Trend)}</td><td class="R m">${FV(r.StockValue)}</td>
     </tr>`;
   }).join('')+'</tbody></table>';
 }
@@ -1441,6 +1468,65 @@ async function sC(){
 
 // ── INIT ──
 load();
+
+// ── ADMIN AUTH ──
+const ADMIN_USER='admin',ADMIN_PASS='jivoadmin';
+function initAuth(){
+  if(sessionStorage.getItem('adminAuth')==='true'){document.body.classList.remove('locked');}
+  else{document.body.classList.add('locked');}
+}
+function showLoginModal(){if(!document.body.classList.contains('locked'))return;document.getElementById('loginModal').classList.add('sh');}
+function closeLoginModal(){document.getElementById('loginModal').classList.remove('sh');document.getElementById('loginErr').textContent='';}
+function doLogin(){
+  const u=document.getElementById('loginUser').value.trim();
+  const p=document.getElementById('loginPass').value;
+  if(u===ADMIN_USER&&p===ADMIN_PASS){
+    sessionStorage.setItem('adminAuth','true');
+    document.body.classList.remove('locked');
+    closeLoginModal();
+    document.getElementById('lockBtn').textContent='🔓';
+    document.getElementById('lockBtn').title='Logged in as admin · Click to lock';
+  } else {
+    document.getElementById('loginErr').textContent='Incorrect credentials.';
+  }
+}
+function toggleLock(){
+  if(document.body.classList.contains('locked')){showLoginModal();}
+  else{sessionStorage.removeItem('adminAuth');document.body.classList.add('locked');document.getElementById('lockBtn').textContent='🔒';document.getElementById('lockBtn').title='Values hidden · Click to unlock';}
+}
+document.addEventListener('keydown',e=>{if(e.key==='Escape')closeLoginModal();});
+initAuth();
 </script>
+
+<!-- LOGIN MODAL -->
+<div id="loginModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9999;align-items:center;justify-content:center">
+ <div style="background:#fff;border-radius:16px;padding:32px 36px;width:340px;box-shadow:0 20px 60px rgba(0,0,0,.25);font-family:var(--font)">
+  <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px">
+   <div style="width:40px;height:40px;background:linear-gradient(135deg,#5046e5,#7c3aed);border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:20px">🔒</div>
+   <div><div style="font-size:16px;font-weight:800;color:#111">Admin Login</div><div style="font-size:11px;color:#8b8fa3;font-weight:600">Enter credentials to view inventory values</div></div>
+  </div>
+  <input id="loginUser" type="text" placeholder="Username" autocomplete="username"
+   style="width:100%;padding:10px 14px;font-size:14px;border:2px solid #ebebef;border-radius:10px;font-family:var(--font);outline:none;margin-bottom:10px;box-sizing:border-box"
+   onfocus="this.style.borderColor='#5046e5'" onblur="this.style.borderColor='#ebebef'">
+  <input id="loginPass" type="password" placeholder="Password" autocomplete="current-password"
+   style="width:100%;padding:10px 14px;font-size:14px;border:2px solid #ebebef;border-radius:10px;font-family:var(--font);outline:none;margin-bottom:6px;box-sizing:border-box"
+   onfocus="this.style.borderColor='#5046e5'" onblur="this.style.borderColor='#ebebef'"
+   onkeydown="if(event.key==='Enter')doLogin()">
+  <div id="loginErr" style="color:#dc2626;font-size:12px;font-weight:700;min-height:18px;margin-bottom:12px"></div>
+  <div style="display:flex;gap:8px">
+   <button onclick="doLogin()" style="flex:1;padding:10px;font-size:13px;font-weight:800;background:linear-gradient(135deg,#5046e5,#7c3aed);color:#fff;border:none;border-radius:10px;cursor:pointer;font-family:var(--font)">Login</button>
+   <button onclick="closeLoginModal()" style="padding:10px 16px;font-size:13px;font-weight:700;background:#f4f4f5;color:#444;border:none;border-radius:10px;cursor:pointer;font-family:var(--font)">Cancel</button>
+  </div>
+ </div>
+</div>
+<style>
+#loginModal{display:flex!important}
+#loginModal:not(.sh){display:none!important}
+.inv-val-wrap{display:inline-block;position:relative;cursor:default}
+.inv-lock{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:13px;pointer-events:none}
+body.locked .inv-val{filter:blur(7px);user-select:none}
+body.locked .inv-val-wrap{cursor:pointer}
+body.locked .inv-lock{display:block}
+</style>
 </body>
 </html>

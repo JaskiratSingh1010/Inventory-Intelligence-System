@@ -182,7 +182,7 @@ def warehouse_summary(category: str = Query(None), owner: str = Query(None)):
         
         combined.extend(q(f"""SELECT W."WhsCode", H."WhsName", {owner_sel},
         COUNT(DISTINCT W."ItemCode") AS "SKUs", ROUND(SUM(W."OnHand"),0) AS "Qty",
-        ROUND(SUM(W."OnOrder"),0) AS "OnOrder", ROUND(SUM(W."IsCommited"),0) AS "Committed",
+        ROUND(SUM(W."OnOrder"),0) AS "OnOrder",
         ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "Value"
         FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode"
         JOIN {db}.OWHS H ON W."WhsCode"=H."WhsCode"
@@ -200,7 +200,7 @@ def warehouse_items(whs: str = Query(""), category: str = Query(None)):
     for db in ALL_DBS:
         combined.extend(q(f"""SELECT G."ItmsGrpNam" AS "Category", W."ItemCode", M."ItemName",
         COALESCE(M."U_Sub_Group",'–') AS "SubGroup",
-        ROUND(W."OnHand",0) AS "OnHand", ROUND(W."IsCommited",0) AS "Committed",
+        ROUND(W."OnHand",0) AS "OnHand",
         ROUND(W."OnOrder",0) AS "OnOrder", ROUND(W."OnHand"-W."IsCommited"+W."OnOrder",0) AS "Available",
         ROUND(W."OnHand"*M."LastPurPrc",0) AS "StockValue"
         FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode"
@@ -219,7 +219,7 @@ def stock_position(category: str = Query(None), whs: str = Query(None)):
         owner_join = f"LEFT JOIN {db}.OUSR U ON H.\"U_Owner\"=U.\"USERID\"" if db != DB3 else ""
         combined.extend(q(f"""SELECT G."ItmsGrpNam" AS "Category",W."ItemCode",M."ItemName",W."WhsCode",H."WhsName",
         {owner_sel},
-        ROUND(W."OnHand",0) AS "OnHand", ROUND(W."IsCommited",0) AS "Committed",
+        ROUND(W."OnHand",0) AS "OnHand",
         ROUND(W."OnOrder",0) AS "OnOrder", ROUND(W."OnHand"-W."IsCommited"+W."OnOrder",0) AS "Available",
         ROUND(W."OnHand"*M."LastPurPrc",0) AS "StockValue"
         FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode"
@@ -263,7 +263,6 @@ def movement(days: int = Query(30), category: str = Query(None),
 @app.get("/api/movers_summary")
 def movers_summary(days: int = Query(30), category: str = Query(None),
                    date_from: str = Query(None), date_to: str = Query(None)):
-    if days not in (30, 60, 90): days = 30
     f = cf(category)
     if date_from and date_to:
         date_filter = f"AND N.\"DocDate\">='{date_from}' AND N.\"DocDate\"<='{date_to}'"
@@ -289,7 +288,6 @@ def movers_summary(days: int = Query(30), category: str = Query(None),
 @app.get("/api/movers_by_subgroup")
 def movers_by_subgroup(days: int = Query(30), category: str = Query("FINISHED"),
                        date_from: str = Query(None), date_to: str = Query(None)):
-    if days not in (30, 60, 90): days = 30
     cat = (category or 'FINISHED').upper()
     cat_f = f"AND G.\"ItmsGrpNam\"='{cat}'"
     if date_from and date_to:
@@ -324,7 +322,6 @@ def movers_by_subgroup(days: int = Query(30), category: str = Query("FINISHED"),
 @app.get("/api/movers")
 def movers(days: int = Query(30), category: str = Query(None), subgroup: str = Query(None),
            status: str = Query(None), date_from: str = Query(None), date_to: str = Query(None)):
-    if days not in (30, 60, 90): days = 30
     f = cf(category)
     sg = f"AND M.\"U_Sub_Group\"='{safe(subgroup)}'" if subgroup else ""
     if date_from and date_to:
@@ -373,8 +370,8 @@ def not_billed_summary():
     return JSONResponse(content={"data": result})
 
 @app.get("/api/not_billed_by_subgroup")
-def not_billed_by_subgroup(days: int = Query(30)):
-    if days not in (30, 60, 90): days = 30
+def not_billed_by_subgroup(days: int = Query(30), date_from: str = Query(None), date_to: str = Query(None)):
+    bill_filter = f"AND I.\"DocDate\">='{date_from}' AND I.\"DocDate\"<='{date_to}'" if date_from and date_to else f"AND I.\"DocDate\">=ADD_DAYS(CURRENT_DATE,-{days})"
     agg = {}
     for db in ALL_DBS:
         rows = q(f"""SELECT COALESCE(M."U_Sub_Group",'UNCLASSIFIED') AS "SubGroup",
@@ -384,7 +381,7 @@ def not_billed_by_subgroup(days: int = Query(30)):
         ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "TotalValue"
         FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
         LEFT JOIN (SELECT DISTINCT L."ItemCode" FROM {db}.OINV I JOIN {db}.INV1 L ON I."DocEntry"=L."DocEntry"
-            WHERE I."CANCELED"='N' AND I."DocDate">=ADD_DAYS(CURRENT_DATE,-{days})) B ON M."ItemCode"=B."ItemCode"
+            WHERE I."CANCELED"='N' {bill_filter}) B ON M."ItemCode"=B."ItemCode"
         WHERE M."InvntItem"='Y' AND M."U_Unit"='{UNIT}' AND G."ItmsGrpNam"='FINISHED' AND W."OnHand">0 AND M."CreateDate"<ADD_DAYS(CURRENT_DATE,-30)
         GROUP BY M."U_Sub_Group" ORDER BY "NotBilledValue" DESC""")
         for r in rows:
@@ -396,7 +393,6 @@ def not_billed_by_subgroup(days: int = Query(30)):
 @app.get("/api/not_billed")
 def not_billed(days: int = Query(30), subgroup: str = Query(None),
                date_from: str = Query(None), date_to: str = Query(None)):
-    if days not in (30, 60, 90): days = 30
     sg = f"AND M.\"U_Sub_Group\"='{safe(subgroup)}'" if subgroup else ""
     if date_from and date_to:
         bill_filter = f"AND I.\"DocDate\">='{date_from}' AND I.\"DocDate\"<='{date_to}'"
@@ -573,7 +569,7 @@ def trace_header(item: str = Query("")):
         r = q(f"""SELECT M."ItemCode",M."ItemName",TO_DATE(M."CreateDate") AS "CreateDate",TO_DATE(M."UpdateDate") AS "UpdateDate",
         M."U_Unit",M."U_Sub_Group" AS "SubGroup",M."U_Variety" AS "Variety",G."ItmsGrpNam" AS "Category",
         ROUND(M."LastPurPrc",4) AS "LastPrice",
-        ROUND(COALESCE(SUM(W."OnHand"),0),0) AS "TotalOnHand",ROUND(COALESCE(SUM(W."IsCommited"),0),0) AS "TotalCommitted",
+        ROUND(COALESCE(SUM(W."OnHand"),0),0) AS "TotalOnHand",
         ROUND(COALESCE(SUM(W."OnOrder"),0),0) AS "TotalOnOrder",ROUND(COALESCE(SUM(W."OnHand"*M."LastPurPrc"),0),2) AS "StockValue"
         FROM {db}.OITM M JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
         LEFT JOIN {db}.OITW W ON M."ItemCode"=W."ItemCode"
@@ -618,8 +614,8 @@ def trace_returns(item: str = Query(""), days: int = Query(0), month: str = Quer
     return JSONResponse(content={"data": []})
 
 @app.get("/api/trace_disassembly")
-def trace_disassembly(item: str = Query(""), days: int = Query(0)):
-    s = safe(item); date_f = f"AND W.\"StartDate\">=ADD_DAYS(CURRENT_DATE,-{days})" if days > 0 else ""
+def trace_disassembly(item: str = Query(""), days: int = Query(0), month: str = Query(None)):
+    s = safe(item); date_f = f"AND TO_CHAR(W.\"StartDate\",'YYYY-MM')='{safe(month)}'" if month else (f"AND W.\"StartDate\">=ADD_DAYS(CURRENT_DATE,-{days})" if days > 0 else "")
     for db in ALL_DBS:
         r = q(f"""SELECT W."DocNum",W."Status",TO_DATE(W."StartDate") AS "StartDate",TO_DATE(W."DueDate") AS "DueDate",
         TO_DATE(W."CloseDate") AS "CloseDate",ROUND(W."PlannedQty",2) AS "PlannedQty",ROUND(W."CmpltQty",2) AS "ActualQty",W."Comments"
@@ -731,4 +727,4 @@ async def serve():
         return HTMLResponse(content=f.read())
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="192.168.1.212", port=8004)
+    uvicorn.run(app, host="localhost", port=8004)

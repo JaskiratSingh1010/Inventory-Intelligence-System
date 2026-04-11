@@ -119,7 +119,7 @@ def warehouse_summary(category:str=Query(None),schema:str=Query("jivo_oil"),owne
     SELECT W."WhsCode",H."WhsName",COALESCE(U."U_NAME",'–') AS "OwnerName",
         COUNT(DISTINCT W."ItemCode") AS "SKUs",
         ROUND(SUM(W."OnHand"),0) AS "Qty",ROUND(SUM(W."OnOrder"),0) AS "OnOrder",
-        ROUND(SUM(W."IsCommited"),0) AS "Committed",ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "Value"
+        ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "Value"
     FROM {db}.OITW W
     JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode"
     JOIN {db}.OWHS H ON W."WhsCode"=H."WhsCode"
@@ -134,7 +134,7 @@ def warehouse_items(whs:str=Query(""),category:str=Query(None),schema:str=Query(
     return JSONResponse(content={"data":q(f"""
     SELECT G."ItmsGrpNam" AS "Category",W."ItemCode",M."ItemName",
         COALESCE(M."U_Sub_Group",'–') AS "SubGroup",COALESCE(M."U_TYPE",'–') AS "ItemType",
-        ROUND(W."OnHand",0) AS "OnHand",ROUND(W."IsCommited",0) AS "Committed",ROUND(W."OnOrder",0) AS "OnOrder",
+        ROUND(W."OnHand",0) AS "OnHand",ROUND(W."OnOrder",0) AS "OnOrder",
         ROUND(W."OnHand"-W."IsCommited"+W."OnOrder",0) AS "Available",
         ROUND(W."OnHand"*M."LastPurPrc",0) AS "StockValue"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
@@ -155,7 +155,7 @@ def stock_position(category:str=Query(None),schema:str=Query("jivo_oil"),whs:str
     db=get_schema(schema);f=cf(category);wf_=wf(whs)
     return JSONResponse(content={"data":q(f"""SELECT G."ItmsGrpNam" AS "Category",W."ItemCode",M."ItemName",
     W."WhsCode",H."WhsName",COALESCE(U."U_NAME",'–') AS "OwnerName",
-    ROUND(W."OnHand",0) AS "OnHand",ROUND(W."IsCommited",0) AS "Committed",ROUND(W."OnOrder",0) AS "OnOrder",
+    ROUND(W."OnHand",0) AS "OnHand",ROUND(W."OnOrder",0) AS "OnOrder",
     ROUND(W."OnHand"-W."IsCommited"+W."OnOrder",0) AS "Available",ROUND(W."OnHand"*M."LastPurPrc",0) AS "StockValue"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode"
     JOIN {db}.OWHS H ON W."WhsCode"=H."WhsCode"
@@ -186,25 +186,27 @@ def movement(days:int=Query(30),category:str=Query(None),schema:str=Query("jivo_
     ORDER BY TO_DATE(N."DocDate") DESC,"OutValue" DESC""")})
 
 @app.get("/api/movers_summary")
-def movers_summary(days:int=Query(30),category:str=Query(None),schema:str=Query("jivo_oil")):
-    if days not in (30,60,90): days=30
+def movers_summary(days:int=Query(30),category:str=Query(None),schema:str=Query("jivo_oil"),
+                   date_from:str=Query(None),date_to:str=Query(None)):
     db=get_schema(schema);f=cf(category)
+    date_filter=f"AND N.\"DocDate\">='{date_from}' AND N.\"DocDate\"<='{date_to}'" if date_from and date_to else f"AND N.\"DocDate\">=ADD_DAYS(CURRENT_DATE,-{days})"
     return JSONResponse(content={"data":q(f"""SELECT X."MovementStatus" AS "Status",COUNT(*) AS "Count",ROUND(SUM(X."StockValue"),0) AS "Value",ROUND(SUM(X."TotalOnHand"),0) AS "Qty"
     FROM (SELECT M."ItemCode",SUM(W."OnHand") AS "TotalOnHand",SUM(W."OnHand"*M."LastPurPrc") AS "StockValue",
         CASE WHEN COALESCE(MV."TotalOut",0)=0 THEN 'NON-MOVING' WHEN MV."TotalOut"<50 THEN 'SLOW' WHEN MV."TotalOut"<500 THEN 'MEDIUM' ELSE 'FAST' END AS "MovementStatus"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
     LEFT JOIN (SELECT N."ItemCode",SUM(N."OutQty") AS "TotalOut" FROM {db}.OINM N JOIN {db}.OITM I ON N."ItemCode"=I."ItemCode"
-        WHERE N."OutQty">0 AND N."DocDate">=ADD_DAYS(CURRENT_DATE,-{days}) AND I."U_Unit"='OIL' GROUP BY N."ItemCode") MV ON M."ItemCode"=MV."ItemCode"
+        WHERE N."OutQty">0 {date_filter} AND I."U_Unit"='OIL' GROUP BY N."ItemCode") MV ON M."ItemCode"=MV."ItemCode"
     WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."OnHand">0 {GIFT_EXCL}
     GROUP BY M."ItemCode",MV."TotalOut") X
     GROUP BY X."MovementStatus" ORDER BY CASE X."MovementStatus" WHEN 'NON-MOVING' THEN 1 WHEN 'SLOW' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END""")})
 
 @app.get("/api/movers_by_subgroup")
-def movers_by_subgroup(days:int=Query(30),item_type:str=Query(None),category:str=Query("FINISHED"),schema:str=Query("jivo_oil")):
-    if days not in (30,60,90): days=30
+def movers_by_subgroup(days:int=Query(30),item_type:str=Query(None),category:str=Query("FINISHED"),schema:str=Query("jivo_oil"),
+                       date_from:str=Query(None),date_to:str=Query(None)):
     db=get_schema(schema);type_f=tf(item_type)
     cat_f=f"AND G.\"ItmsGrpNam\"='{category.upper()}'"
     valid=FG_VALID if category=='FINISHED' else (PM_VALID if category=='PACKAGING MATERIAL' else RM_VALID)
+    date_filter=f"AND N.\"DocDate\">='{date_from}' AND N.\"DocDate\"<='{date_to}'" if date_from and date_to else f"AND N.\"DocDate\">=ADD_DAYS(CURRENT_DATE,-{days})"
     return JSONResponse(content={"data":q(f"""
     SELECT COALESCE(CASE WHEN M."U_Sub_Group"='MUSTARD' AND M."U_TYPE"='PREMIUM' THEN 'YELLOW MUSTARD' ELSE M."U_Sub_Group" END,'UNCLASSIFIED') AS "SubGroup",
         COUNT(DISTINCT M."ItemCode") AS "TotalSKUs",
@@ -216,17 +218,23 @@ def movers_by_subgroup(days:int=Query(30),item_type:str=Query(None),category:str
         ROUND(SUM(CASE WHEN COALESCE(MV."TotalOut",0)=0 THEN W."OnHand"*M."LastPurPrc" ELSE 0 END),0) AS "StuckValue"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
     LEFT JOIN (SELECT N."ItemCode",SUM(N."OutQty") AS "TotalOut" FROM {db}.OINM N JOIN {db}.OITM I ON N."ItemCode"=I."ItemCode"
-        WHERE N."OutQty">0 AND N."DocDate">=ADD_DAYS(CURRENT_DATE,-{days}) AND I."U_Unit"='OIL' GROUP BY N."ItemCode") MV ON M."ItemCode"=MV."ItemCode"
+        WHERE N."OutQty">0 {date_filter} AND I."U_Unit"='OIL' GROUP BY N."ItemCode") MV ON M."ItemCode"=MV."ItemCode"
     WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {cat_f} AND W."OnHand">0 AND M."U_Sub_Group" IN ({valid}) {type_f}
     GROUP BY CASE WHEN M."U_Sub_Group"='MUSTARD' AND M."U_TYPE"='PREMIUM' THEN 'YELLOW MUSTARD' ELSE M."U_Sub_Group" END
-    ORDER BY "StuckValue" DESC,"StockValue" DESC""")})
+    ORDER BY "StuckValue" DESC,"StockValue" DESC""")}))
 
 @app.get("/api/movers")
-def movers(days:int=Query(30),category:str=Query(None),subgroup:str=Query(None),item_type:str=Query(None),schema:str=Query("jivo_oil")):
-    if days not in (30,60,90): days=30
+def movers(days:int=Query(30),category:str=Query(None),subgroup:str=Query(None),item_type:str=Query(None),schema:str=Query("jivo_oil"),
+           date_from:str=Query(None),date_to:str=Query(None)):
     db=get_schema(schema);f=cf(category)
     sg="AND M.\"U_Sub_Group\"='MUSTARD' AND M.\"U_TYPE\"='PREMIUM'" if subgroup=='YELLOW MUSTARD' else (f"AND M.\"U_Sub_Group\"='{safe(subgroup)}'" if subgroup else "")
     type_f=tf(item_type)
+    if date_from and date_to:
+        date_filter=f"AND N.\"DocDate\">='{date_from}' AND N.\"DocDate\"<='{date_to}'"
+        day_div=f"(DAYS_BETWEEN(TO_DATE('{date_from}'),TO_DATE('{date_to}'))+1)"
+    else:
+        date_filter=f"AND N.\"DocDate\">=ADD_DAYS(CURRENT_DATE,-{days})"
+        day_div=str(days)
     return JSONResponse(content={"data":q(f"""
     SELECT G."ItmsGrpNam" AS "Category",M."ItemCode",M."ItemName",
         CASE WHEN M."U_Sub_Group"='MUSTARD' AND M."U_TYPE"='PREMIUM' THEN 'YELLOW MUSTARD' ELSE COALESCE(M."U_Sub_Group",'–') END AS "SubGroup",
@@ -235,14 +243,14 @@ def movers(days:int=Query(30),category:str=Query(None),subgroup:str=Query(None),
         COALESCE(MV."TotalOut",0) AS "Out{days}d",TO_DATE(MV."LastMoveDate") AS "LastMoveDate",
         CASE WHEN MV."LastMoveDate" IS NULL THEN -1 ELSE DAYS_BETWEEN(MV."LastMoveDate",CURRENT_DATE) END AS "DaysSinceMove",
         CASE WHEN COALESCE(MV."TotalOut",0)=0 THEN 'NON-MOVING' WHEN MV."TotalOut"<50 THEN 'SLOW' WHEN MV."TotalOut"<500 THEN 'MEDIUM' ELSE 'FAST' END AS "MovementStatus",
-        CASE WHEN COALESCE(MV."TotalOut",0)=0 THEN -1 ELSE ROUND(SUM(W."OnHand")/(MV."TotalOut"/{days}),0) END AS "DaysOfStockLeft"
+        CASE WHEN COALESCE(MV."TotalOut",0)=0 THEN -1 ELSE ROUND(SUM(W."OnHand")/(MV."TotalOut"/{day_div}),0) END AS "DaysOfStockLeft"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
     LEFT JOIN (SELECT N."ItemCode",SUM(N."OutQty") AS "TotalOut",MAX(CASE WHEN N."OutQty">0 THEN N."DocDate" END) AS "LastMoveDate"
         FROM {db}.OINM N JOIN {db}.OITM I ON N."ItemCode"=I."ItemCode"
-        WHERE N."OutQty">0 AND N."DocDate">=ADD_DAYS(CURRENT_DATE,-{days}) AND I."U_Unit"='OIL' GROUP BY N."ItemCode") MV ON M."ItemCode"=MV."ItemCode"
+        WHERE N."OutQty">0 {date_filter} AND I."U_Unit"='OIL' GROUP BY N."ItemCode") MV ON M."ItemCode"=MV."ItemCode"
     WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."OnHand">0 {sg} {type_f} {GIFT_EXCL}
     GROUP BY G."ItmsGrpNam",M."ItemCode",M."ItemName",M."U_Sub_Group",M."U_TYPE",MV."TotalOut",MV."LastMoveDate"
-    ORDER BY COALESCE(MV."TotalOut",0) ASC,"StockValue" DESC""")})
+    ORDER BY COALESCE(MV."TotalOut",0) ASC,"StockValue" DESC""")}))
 
 @app.get("/api/not_billed_summary")
 def not_billed_summary(schema:str=Query("jivo_oil")):
@@ -260,9 +268,10 @@ def not_billed_summary(schema:str=Query("jivo_oil")):
     return JSONResponse(content={"data":q(" UNION ALL ".join(parts))})
 
 @app.get("/api/not_billed_by_subgroup")
-def not_billed_by_subgroup(days:int=Query(30),item_type:str=Query(None),schema:str=Query("jivo_oil")):
-    if days not in (30,60,90): days=30
+def not_billed_by_subgroup(days:int=Query(30),item_type:str=Query(None),schema:str=Query("jivo_oil"),
+                           date_from:str=Query(None),date_to:str=Query(None)):
     db=get_schema(schema);type_f=tf(item_type)
+    bill_filter=f"AND I.\"DocDate\">='{date_from}' AND I.\"DocDate\"<='{date_to}'" if date_from and date_to else f"AND I.\"DocDate\">=ADD_DAYS(CURRENT_DATE,-{days})"
     return JSONResponse(content={"data":q(f"""
     SELECT COALESCE(M."U_Sub_Group",'UNCLASSIFIED') AS "SubGroup",
         COUNT(DISTINCT M."ItemCode") AS "TotalSKUs",
@@ -271,15 +280,14 @@ def not_billed_by_subgroup(days:int=Query(30),item_type:str=Query(None),schema:s
         ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "TotalValue"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
     LEFT JOIN (SELECT DISTINCT L."ItemCode" FROM {db}.OINV I JOIN {db}.INV1 L ON I."DocEntry"=L."DocEntry"
-        WHERE I."CANCELED"='N' AND I."DocDate">=ADD_DAYS(CURRENT_DATE,-{days})) B ON M."ItemCode"=B."ItemCode"
+        WHERE I."CANCELED"='N' {bill_filter}) B ON M."ItemCode"=B."ItemCode"
     WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' AND G."ItmsGrpNam"='FINISHED'
       AND W."OnHand">0 AND M."CreateDate"<ADD_DAYS(CURRENT_DATE,-30) AND M."U_Sub_Group" IN ({FG_VALID}) {type_f}
-    GROUP BY M."U_Sub_Group" ORDER BY "NotBilledValue" DESC""")})
+    GROUP BY M."U_Sub_Group" ORDER BY "NotBilledValue" DESC""")}))
 
 @app.get("/api/not_billed")
 def not_billed(days:int=Query(30),subgroup:str=Query(None),item_type:str=Query(None),schema:str=Query("jivo_oil"),
                date_from:str=Query(None),date_to:str=Query(None)):
-    if days not in (30,60,90): days=30
     db=get_schema(schema)
     sg=f"AND M.\"U_Sub_Group\"='{safe(subgroup)}'" if subgroup else ""
     type_f=tf(item_type)
@@ -434,7 +442,6 @@ def trace_header(item:str=Query(""),schema:str=Query("jivo_oil")):
         M."U_Sub_Group" AS "SubGroup",M."U_TYPE" AS "ItemType",
         G."ItmsGrpNam" AS "Category",ROUND(M."LastPurPrc",4) AS "LastPrice",
         ROUND(COALESCE(SUM(W."OnHand"),0),0) AS "TotalOnHand",
-        ROUND(COALESCE(SUM(W."IsCommited"),0),0) AS "TotalCommitted",
         ROUND(COALESCE(SUM(W."OnOrder"),0),0) AS "TotalOnOrder",
         ROUND(COALESCE(SUM(W."OnHand"*M."LastPurPrc"),0),2) AS "StockValue"
     FROM {db}.OITM M JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
@@ -470,9 +477,9 @@ def trace_returns(item:str=Query(""),days:int=Query(0),schema:str=Query("jivo_oi
     ORDER BY N."DocDate" DESC""")})
 
 @app.get("/api/trace_disassembly")
-def trace_disassembly(item:str=Query(""),days:int=Query(0),schema:str=Query("jivo_oil")):
+def trace_disassembly(item:str=Query(""),days:int=Query(0),schema:str=Query("jivo_oil"),month:str=Query(None)):
     db=get_schema(schema);s=safe(item)
-    date_f=f"AND W.\"StartDate\">=ADD_DAYS(CURRENT_DATE,-{days})" if days>0 else ""
+    date_f=f"AND TO_CHAR(W.\"StartDate\",'YYYY-MM')='{safe(month)}'" if month else (f"AND W.\"StartDate\">=ADD_DAYS(CURRENT_DATE,-{days})" if days>0 else "")
     return JSONResponse(content={"data":q(f"""
     SELECT W."DocNum",W."Status",TO_DATE(W."StartDate") AS "StartDate",TO_DATE(W."DueDate") AS "DueDate",
         TO_DATE(W."CloseDate") AS "CloseDate",ROUND(W."PlannedQty",2) AS "PlannedQty",ROUND(W."CmpltQty",2) AS "ActualQty",W."Comments"
@@ -540,4 +547,4 @@ async def serve():
         return HTMLResponse(content=f.read())
 
 if __name__=="__main__":
-    uvicorn.run(app,host="192.168.1.212",port=8004)
+    uvicorn.run(app,host="localhost",port=8004)
