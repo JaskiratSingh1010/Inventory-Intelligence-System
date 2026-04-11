@@ -221,7 +221,7 @@ def movers_by_subgroup(days:int=Query(30),item_type:str=Query(None),category:str
         WHERE N."OutQty">0 {date_filter} AND I."U_Unit"='OIL' GROUP BY N."ItemCode") MV ON M."ItemCode"=MV."ItemCode"
     WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {cat_f} AND W."OnHand">0 AND M."U_Sub_Group" IN ({valid}) {type_f}
     GROUP BY CASE WHEN M."U_Sub_Group"='MUSTARD' AND M."U_TYPE"='PREMIUM' THEN 'YELLOW MUSTARD' ELSE M."U_Sub_Group" END
-    ORDER BY "StuckValue" DESC,"StockValue" DESC""")}))
+    ORDER BY "StuckValue" DESC,"StockValue" DESC""")})
 
 @app.get("/api/movers")
 def movers(days:int=Query(30),category:str=Query(None),subgroup:str=Query(None),item_type:str=Query(None),schema:str=Query("jivo_oil"),
@@ -283,7 +283,7 @@ def not_billed_by_subgroup(days:int=Query(30),item_type:str=Query(None),schema:s
         WHERE I."CANCELED"='N' {bill_filter}) B ON M."ItemCode"=B."ItemCode"
     WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' AND G."ItmsGrpNam"='FINISHED'
       AND W."OnHand">0 AND M."CreateDate"<ADD_DAYS(CURRENT_DATE,-30) AND M."U_Sub_Group" IN ({FG_VALID}) {type_f}
-    GROUP BY M."U_Sub_Group" ORDER BY "NotBilledValue" DESC""")}))
+    GROUP BY M."U_Sub_Group" ORDER BY "NotBilledValue" DESC""")})
 
 @app.get("/api/not_billed")
 def not_billed(days:int=Query(30),subgroup:str=Query(None),item_type:str=Query(None),schema:str=Query("jivo_oil"),
