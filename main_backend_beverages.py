@@ -5,9 +5,11 @@ from fastapi import FastAPI, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.staticfiles import StaticFiles
 from hdbcli import dbapi
-
 from dotenv import load_dotenv
+from cache_manager import cache, cache_result
+
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
@@ -15,6 +17,11 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.add_middleware(GZipMiddleware, minimum_size=0)
+
+# Serve Chart.js locally (no CDN needed)
+_static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+if os.path.isdir(_static_dir):
+    app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
 DB1 = "JIVO_MART_HANADB"
 DB2 = "JIVO_OIL_HANADB"
@@ -35,10 +42,19 @@ BEV_RM_VALID = ("'LAB','READY SYRUP','FLAVOUR','READY UNITS','SALTS','CIP',"
 GIFT_EXCL = "AND M.\"U_Sub_Group\" NOT IN ('GIFT PACK')"
 
 # Connection settings
-_CONN_PARAMS = dict(address='103.89.45.192', port=30015, user='DATA1', password='Jivo@1989')
+_CONN_PARAMS = dict(address='192.168.1.182', port=30015, user='DATA1', password='Jivo@1989')
 
 def conn():
-    return dbapi.connect(**_CONN_PARAMS)
+    for ip in ['192.168.1.182', '103.89.45.192']:
+        try:
+            print(f"Connecting to SAP HANA (Beverages) at {ip}...")
+            c = dbapi.connect(address=ip, port=30015, user='DATA1', password='Jivo@1989')
+            print(f"Connected to SAP HANA (Beverages) at {ip} successfully.")
+            return c
+        except Exception as e:
+            print(f"Failed to connect to {ip}: {str(e)}")
+    print("CRITICAL: All SAP HANA connection attempts failed.")
+    raise Exception("Could not connect to any SAP HANA IP.")
 
 def cv(v):
     if v is None: return None
@@ -118,7 +134,7 @@ def kpi(category: str = Query(None), whs: str = Query(None)):
     for db in dbs:
         r = q(f"""SELECT
         ROUND(COALESCE((SELECT SUM(W."OnHand") FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod" WHERE 1=1 {inv_kpi} {uf} {f} AND W."OnHand">0 {wf_} {GIFT_EXCL}),0),0) AS "TotalQty",
-        ROUND(COALESCE((SELECT SUM(W."OnHand"*M."LastPurPrc") FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod" WHERE 1=1 {inv_kpi} {uf} {f} AND W."OnHand">0 {wf_} {GIFT_EXCL}),0),0) AS "TotalValue",
+        ROUND(COALESCE((SELECT SUM(W."StockValue") FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod" WHERE 1=1 {inv_kpi} {uf} {f} AND W."OnHand">0 {wf_} {GIFT_EXCL}),0),2) AS "TotalValue",
         (SELECT COUNT(DISTINCT W."ItemCode") FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod" WHERE 1=1 {inv_kpi} {uf} {f} AND W."OnHand">0 {wf_} {GIFT_EXCL}) AS "TotalSKUs",
         (SELECT COUNT(*) FROM (SELECT M."ItemCode" FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod" WHERE 1=1 {inv_kpi} {uf} {f} {wf_} {GIFT_EXCL} GROUP BY M."ItemCode" HAVING SUM(W."OnHand")<=0)) AS "OutOfStockSKUs"
         FROM DUMMY""")
@@ -133,8 +149,8 @@ def categories(category: str = Query(None)):
     for db in dbs:
         rows.extend(q(f"""SELECT G."ItmsGrpNam" AS "Category",
             COUNT(DISTINCT W."ItemCode") AS "SKUs",
-            ROUND(SUM(W."OnHand"),0) AS "Qty",
-            ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "Value"
+            ROUND(SUM(W."OnHand"),2) AS "Qty",
+            ROUND(SUM(W."StockValue"),2) AS "Value"
             FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode"
             JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
             WHERE M."InvntItem"='Y' {uf} {f} AND W."OnHand">0
@@ -153,7 +169,7 @@ def out_of_stock(category: str = Query(None)):
     f = cf(category); uf = unit_f(category)
     combined = []
     for db in get_dbs(category):
-        combined.extend(q(f"""SELECT G."ItmsGrpNam" AS "Category",M."ItemCode",M."ItemName",ROUND(SUM(W."OnHand"),0) AS "TotalOnHand",M."LastPurPrc"
+        combined.extend(q(f"""SELECT G."ItmsGrpNam" AS "Category",M."ItemCode",M."ItemName",ROUND(SUM(W."OnHand"),2) AS "TotalOnHand",M."LastPurPrc"
         FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
         WHERE M."InvntItem"='Y' {uf} {f}
         GROUP BY G."ItmsGrpNam",M."ItemCode",M."ItemName",M."LastPurPrc" HAVING SUM(W."OnHand")<=0 ORDER BY G."ItmsGrpNam",M."ItemName" """))
@@ -195,9 +211,9 @@ def warehouse_summary(category: str = Query(None), owner: str = Query(None)):
         group_col = ', U."U_NAME"' if db != DB3 else ''
         
         combined.extend(q(f"""SELECT W."WhsCode", H."WhsName", {owner_sel},
-        COUNT(DISTINCT W."ItemCode") AS "SKUs", ROUND(SUM(W."OnHand"),0) AS "Qty",
+        COUNT(DISTINCT W."ItemCode") AS "SKUs", ROUND(SUM(W."OnHand"),2) AS "Qty",
         ROUND(SUM(W."OnOrder"),0) AS "OnOrder",
-        ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "Value"
+        ROUND(SUM(W."StockValue"),2) AS "Value"
         FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode"
         JOIN {db}.OWHS H ON W."WhsCode"=H."WhsCode"
         {owner_join}
@@ -214,9 +230,9 @@ def warehouse_items(whs: str = Query(""), category: str = Query(None)):
     for db in ALL_DBS:
         combined.extend(q(f"""SELECT G."ItmsGrpNam" AS "Category", W."ItemCode", M."ItemName",
         COALESCE(M."U_Sub_Group",'–') AS "SubGroup",
-        ROUND(W."OnHand",0) AS "OnHand",
-        ROUND(W."OnOrder",0) AS "OnOrder", ROUND(W."OnHand"-W."IsCommited"+W."OnOrder",0) AS "Available",
-        ROUND(W."OnHand"*M."LastPurPrc",0) AS "StockValue"
+        ROUND(W."OnHand",2) AS "OnHand",
+        ROUND(W."OnOrder",0) AS "OnOrder", ROUND(W."OnHand"-W."IsCommited"+W."OnOrder",2) AS "Available",
+        ROUND(W."StockValue",2) AS "StockValue"
         FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode"
         JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
         WHERE M."InvntItem"='Y' AND M."U_Unit"='{UNIT}' {f} AND W."WhsCode"='{s}' AND W."OnHand">0
@@ -233,9 +249,9 @@ def stock_position(category: str = Query(None), whs: str = Query(None)):
         owner_join = f"LEFT JOIN {db}.OUSR U ON H.\"U_Owner\"=U.\"USERID\"" if db != DB3 else ""
         combined.extend(q(f"""SELECT G."ItmsGrpNam" AS "Category",W."ItemCode",M."ItemName",W."WhsCode",H."WhsName",
         {owner_sel},
-        ROUND(W."OnHand",0) AS "OnHand",
-        ROUND(W."OnOrder",0) AS "OnOrder", ROUND(W."OnHand"-W."IsCommited"+W."OnOrder",0) AS "Available",
-        ROUND(W."OnHand"*M."LastPurPrc",0) AS "StockValue"
+        ROUND(W."OnHand",2) AS "OnHand",
+        ROUND(W."OnOrder",0) AS "OnOrder", ROUND(W."OnHand"-W."IsCommited"+W."OnOrder",2) AS "Available",
+        ROUND(W."StockValue",2) AS "StockValue"
         FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode"
         JOIN {db}.OWHS H ON W."WhsCode"=H."WhsCode"
         {owner_join}
@@ -285,7 +301,7 @@ def movers_summary(days: int = Query(30), category: str = Query(None),
     agg = {}
     for db in get_dbs(category):
         rows = q(f"""SELECT X."MovementStatus" AS "Status",COUNT(*) AS "Count",ROUND(SUM(X."StockValue"),0) AS "Value",ROUND(SUM(X."TotalOnHand"),0) AS "Qty"
-        FROM (SELECT M."ItemCode",SUM(W."OnHand") AS "TotalOnHand",SUM(W."OnHand"*M."LastPurPrc") AS "StockValue",
+        FROM (SELECT M."ItemCode",SUM(W."OnHand") AS "TotalOnHand",SUM(W."StockValue") AS "StockValue",
             CASE WHEN COALESCE(MV."TotalOut",0)=0 THEN 'NON-MOVING' WHEN MV."TotalOut"<50 THEN 'SLOW' WHEN MV."TotalOut"<500 THEN 'MEDIUM' ELSE 'FAST' END AS "MovementStatus"
         FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
         LEFT JOIN (SELECT N."ItemCode",SUM(N."OutQty") AS "TotalOut" FROM {db}.OINM N JOIN {db}.OITM I ON N."ItemCode"=I."ItemCode"
@@ -300,10 +316,10 @@ def movers_summary(days: int = Query(30), category: str = Query(None),
     return JSONResponse(content={"data": [agg[s] for s in order if s in agg]})
 
 @app.get("/api/movers_by_subgroup")
-def movers_by_subgroup(days: int = Query(30), category: str = Query("FINISHED"),
+def movers_by_subgroup(days: int = Query(30), category: str = Query(None),
                        date_from: str = Query(None), date_to: str = Query(None), whs: str = Query(None)):
-    cat = (category or 'FINISHED').upper()
-    cat_f = f"AND G.\"ItmsGrpNam\"='{cat}'"
+    cat = category.upper() if category else ''
+    cat_f = f"AND G.\"ItmsGrpNam\"='{cat}'" if category else "AND G.\"ItmsGrpNam\" IN ('FINISHED','RAW MATERIAL','PACKAGING MATERIAL')"
     wf2 = whs_f(whs)
     if date_from and date_to:
         date_filter = f"AND N.\"DocDate\">='{date_from}' AND N.\"DocDate\"<='{date_to}'"
@@ -311,32 +327,33 @@ def movers_by_subgroup(days: int = Query(30), category: str = Query("FINISHED"),
         date_filter = f"AND N.\"DocDate\">=ADD_DAYS(CURRENT_DATE,-{days})"
     agg = {}
     for db in get_dbs(category):
-        rows = q(f"""SELECT COALESCE(M."U_Sub_Group",'UNCLASSIFIED') AS "SubGroup",
+        rows = q(f"""SELECT G."ItmsGrpNam" AS "Category", COALESCE(M."U_Sub_Group",'UNCLASSIFIED') AS "SubGroup",
         COUNT(DISTINCT M."ItemCode") AS "TotalSKUs",
-        SUM(CASE WHEN COALESCE(MV."TotalOut",0)=0 THEN 1 ELSE 0 END) AS "NonMovingSKUs",
-        SUM(CASE WHEN COALESCE(MV."TotalOut",0)>0 AND COALESCE(MV."TotalOut",0)<50 THEN 1 ELSE 0 END) AS "SlowSKUs",
-        SUM(CASE WHEN COALESCE(MV."TotalOut",0)>=50 AND COALESCE(MV."TotalOut",0)<500 THEN 1 ELSE 0 END) AS "MediumSKUs",
-        SUM(CASE WHEN COALESCE(MV."TotalOut",0)>=500 THEN 1 ELSE 0 END) AS "FastSKUs",
-        ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "StockValue",
-        ROUND(SUM(CASE WHEN COALESCE(MV."TotalOut",0)=0 THEN W."OnHand"*M."LastPurPrc" ELSE 0 END),0) AS "StuckValue"
+        COUNT(DISTINCT CASE WHEN COALESCE(MV."TotalOut",0)=0 THEN M."ItemCode" END) AS "NonMovingSKUs",
+        COUNT(DISTINCT CASE WHEN COALESCE(MV."TotalOut",0)>0 AND COALESCE(MV."TotalOut",0)<50 THEN M."ItemCode" END) AS "SlowSKUs",
+        COUNT(DISTINCT CASE WHEN COALESCE(MV."TotalOut",0)>=50 AND COALESCE(MV."TotalOut",0)<500 THEN M."ItemCode" END) AS "MediumSKUs",
+        COUNT(DISTINCT CASE WHEN COALESCE(MV."TotalOut",0)>=500 THEN M."ItemCode" END) AS "FastSKUs",
+        ROUND(SUM(W."StockValue"),2) AS "StockValue",
+        ROUND(SUM(CASE WHEN COALESCE(MV."TotalOut",0)=0 THEN W."StockValue" ELSE 0 END),2) AS "StuckValue"
         FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode"
         JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
         LEFT JOIN (SELECT N."ItemCode",SUM(N."OutQty") AS "TotalOut" FROM {db}.OINM N JOIN {db}.OITM I ON N."ItemCode"=I."ItemCode"
             WHERE N."OutQty">0 {date_filter} AND I."U_Unit"='{UNIT}' GROUP BY N."ItemCode") MV ON M."ItemCode"=MV."ItemCode"
         WHERE M."InvntItem"='Y' AND M."U_Unit"='{UNIT}' {cat_f} AND W."OnHand">0 {wf2}
-        GROUP BY M."U_Sub_Group" ORDER BY "StuckValue" DESC,"StockValue" DESC""")
+        GROUP BY G."ItmsGrpNam", M."U_Sub_Group" ORDER BY "StuckValue" DESC,"StockValue" DESC""")
         for r in rows:
             sg = r["SubGroup"]
             if sg not in agg:
-                agg[sg] = {"SubGroup": sg, "TotalSKUs": 0, "NonMovingSKUs": 0, "SlowSKUs": 0, "MediumSKUs": 0, "FastSKUs": 0, "StockValue": 0, "StuckValue": 0}
+                agg[sg] = {"SubGroup": sg, "Category": r.get("Category", ""), "TotalSKUs": 0, "NonMovingSKUs": 0, "SlowSKUs": 0, "MediumSKUs": 0, "FastSKUs": 0, "StockValue": 0, "StuckValue": 0}
             for k in ["TotalSKUs","NonMovingSKUs","SlowSKUs","MediumSKUs","FastSKUs","StockValue","StuckValue"]:
                 agg[sg][k] += float(r.get(k, 0) or 0)
-    result = sorted(agg.values(), key=lambda x: (x["StuckValue"], x["StockValue"]), reverse=True)
+    _cat_order = {'FINISHED': 1, 'RAW MATERIAL': 2, 'PACKAGING MATERIAL': 3, 'TRADING ITEMS': 4, 'GIFT PACK': 5}
+    result = sorted(agg.values(), key=lambda x: (_cat_order.get(x.get("Category", ""), 6), -x["StuckValue"], -x["StockValue"]))
     return JSONResponse(content={"data": result})
 
 @app.get("/api/movers")
 def movers(days: int = Query(30), category: str = Query(None), subgroup: str = Query(None),
-           status: str = Query(None), date_from: str = Query(None), date_to: str = Query(None), whs: str = Query(None)):
+           status: str = Query(None), date_from: str = Query(None), date_to: str = Query(None), whs: str = Query(None), page: int = Query(1), limit: int = Query(100)):
     f = cf(category)
     sg = f"AND M.\"U_Sub_Group\"='{safe(subgroup)}'" if subgroup else ""
     wf2 = whs_f(whs)
@@ -350,7 +367,7 @@ def movers(days: int = Query(30), category: str = Query(None), subgroup: str = Q
     for db in get_dbs(category):
         combined.extend(q(f"""SELECT G."ItmsGrpNam" AS "Category",M."ItemCode",M."ItemName",
         COALESCE(M."U_Sub_Group",'–') AS "SubGroup",
-        ROUND(SUM(W."OnHand"),0) AS "TotalOnHand",ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "StockValue",
+        ROUND(SUM(W."OnHand"),2) AS "TotalOnHand",ROUND(SUM(W."StockValue"),2) AS "StockValue",
         COALESCE(MV."TotalOut",0) AS "Out{days}d",
         TO_DATE(MV."LastMoveDate") AS "LastMoveDate",
         CASE WHEN MV."LastMoveDate" IS NULL THEN -1 ELSE DAYS_BETWEEN(MV."LastMoveDate",CURRENT_DATE) END AS "DaysSinceMove",
@@ -364,7 +381,7 @@ def movers(days: int = Query(30), category: str = Query(None), subgroup: str = Q
             WHERE N."OutQty">0 {date_filter} AND I."U_Unit"='{UNIT}' GROUP BY N."ItemCode") MV ON M."ItemCode"=MV."ItemCode"
         WHERE M."InvntItem"='Y' AND M."U_Unit"='{UNIT}' {f} AND W."OnHand">0 {wf2} {sg}
         GROUP BY G."ItmsGrpNam",M."ItemCode",M."ItemName",M."U_Sub_Group",MV."TotalOut",MV."LastMoveDate"
-        ORDER BY COALESCE(MV."TotalOut",0) ASC,"StockValue" DESC"""))
+        ORDER BY COALESCE(MV."TotalOut",0) ASC,"StockValue" DESC LIMIT {limit} OFFSET {(page-1)*limit}"""))
     if status and status != 'all':
         combined = [r for r in combined if r.get("MovementStatus") == status.upper()]
     return JSONResponse(content={"data": combined})
@@ -377,7 +394,7 @@ def not_billed_summary():
         ts, tv = 0, 0
         for db in ALL_DBS:
             r = q(f"""SELECT COUNT(DISTINCT CASE WHEN B."ItemCode" IS NULL THEN M."ItemCode" END) AS "NotBilledSKUs",
-            ROUND(SUM(CASE WHEN B."ItemCode" IS NULL THEN W."OnHand"*M."LastPurPrc" ELSE 0 END),0) AS "NotBilledValue"
+            ROUND(SUM(CASE WHEN B."ItemCode" IS NULL THEN W."StockValue" ELSE 0 END),2) AS "NotBilledValue"
             FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
             LEFT JOIN (SELECT DISTINCT L."ItemCode" FROM {db}.OINV I JOIN {db}.INV1 L ON I."DocEntry"=L."DocEntry"
                 WHERE I."CANCELED"='N' AND I."DocDate">=ADD_DAYS(CURRENT_DATE,-{period})) B ON M."ItemCode"=B."ItemCode"
@@ -392,11 +409,11 @@ def not_billed_by_subgroup(days: int = Query(30), date_from: str = Query(None), 
     wf2 = whs_f(whs)
     agg = {}
     for db in ALL_DBS:
-        rows = q(f"""SELECT COALESCE(M."U_Sub_Group",'UNCLASSIFIED') AS "SubGroup",
+        rows = q(f"""SELECT G."ItmsGrpNam" AS "Category", COALESCE(M."U_Sub_Group",'UNCLASSIFIED') AS "SubGroup",
         COUNT(DISTINCT M."ItemCode") AS "TotalSKUs",
         COUNT(DISTINCT CASE WHEN B."ItemCode" IS NULL THEN M."ItemCode" END) AS "NotBilledSKUs",
-        ROUND(SUM(CASE WHEN B."ItemCode" IS NULL THEN W."OnHand"*M."LastPurPrc" ELSE 0 END),0) AS "NotBilledValue",
-        ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "TotalValue"
+        ROUND(SUM(CASE WHEN B."ItemCode" IS NULL THEN W."StockValue" ELSE 0 END),2) AS "NotBilledValue",
+        ROUND(SUM(W."StockValue"),2) AS "TotalValue"
         FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
         LEFT JOIN (SELECT DISTINCT L."ItemCode" FROM {db}.OINV I JOIN {db}.INV1 L ON I."DocEntry"=L."DocEntry"
             WHERE I."CANCELED"='N' {bill_filter}) B ON M."ItemCode"=B."ItemCode"
@@ -422,7 +439,7 @@ def not_billed(days: int = Query(30), subgroup: str = Query(None),
     for db in ALL_DBS:
         combined.extend(q(f"""SELECT G."ItmsGrpNam" AS "Category",M."ItemCode",M."ItemName",
         COALESCE(M."U_Sub_Group",'–') AS "SubGroup",
-        ROUND(SUM(W."OnHand"),0) AS "CurrentStock",ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "StockValue",
+        ROUND(SUM(W."OnHand"),2) AS "CurrentStock",ROUND(SUM(W."StockValue"),2) AS "StockValue",
         TO_DATE(LB."LastBillDate") AS "LastBillDate",
         CASE WHEN LB."LastBillDate" IS NULL THEN 'NEVER BILLED' ELSE CAST(DAYS_BETWEEN(LB."LastBillDate",CURRENT_DATE) AS VARCHAR)||' days ago' END AS "LastBilledAgo",
         LB."LastCustomer", TO_DATE(M."CreateDate") AS "CreatedOn",
@@ -442,9 +459,9 @@ def not_billed(days: int = Query(30), subgroup: str = Query(None),
 # ════════════ ABC-XYZ ════════════
 def abc_inner(db):
     return f"""SELECT M."ItemCode",M."ItemName",COALESCE(M."U_Sub_Group",'UNCLASSIFIED') AS "SubGroup",
-    ROUND(SUM(W."OnHand"),0) AS "TotalOnHand",ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "StockValue",
-    ROW_NUMBER() OVER (ORDER BY SUM(W."OnHand"*M."LastPurPrc") DESC) AS "Rank",
-    ROUND(SUM(SUM(W."OnHand"*M."LastPurPrc")) OVER (ORDER BY SUM(W."OnHand"*M."LastPurPrc") DESC)/NULLIF(SUM(SUM(W."OnHand"*M."LastPurPrc")) OVER(),0)*100,2) AS "CumulativePct"
+    ROUND(SUM(W."OnHand"),2) AS "TotalOnHand",ROUND(SUM(W."StockValue"),2) AS "StockValue",
+    ROW_NUMBER() OVER (ORDER BY SUM(W."StockValue") DESC) AS "Rank",
+    ROUND(SUM(SUM(W."StockValue")) OVER (ORDER BY SUM(W."StockValue") DESC)/NULLIF(SUM(SUM(W."StockValue")) OVER(),0)*100,2) AS "CumulativePct"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
     WHERE M."InvntItem"='Y' AND M."U_Unit"='{UNIT}' AND G."ItmsGrpNam"='FINISHED' AND W."OnHand">0
     GROUP BY M."ItemCode",M."ItemName",M."U_Sub_Group" """
@@ -484,7 +501,7 @@ def abcxyz_by_subgroup():
         {XC},COMBINED AS (SELECT A."SubGroup",COUNT(*) AS "TotalSKUs",ROUND(SUM(A."StockValue"),0) AS "StockValue",
         SUM(CASE WHEN A."ABCClass"='A' THEN 1 ELSE 0 END) AS "A_Count",SUM(CASE WHEN A."ABCClass"='B' THEN 1 ELSE 0 END) AS "B_Count",SUM(CASE WHEN A."ABCClass"='C' THEN 1 ELSE 0 END) AS "C_Count",
         SUM(CASE WHEN COALESCE(X."XYZClass",'Z')='X' THEN 1 ELSE 0 END) AS "X_Count",SUM(CASE WHEN COALESCE(X."XYZClass",'Z')='Y' THEN 1 ELSE 0 END) AS "Y_Count",SUM(CASE WHEN COALESCE(X."XYZClass",'Z')='Z' THEN 1 ELSE 0 END) AS "Z_Count"
-        FROM ABC_BASE A LEFT JOIN XYZ_BASE X ON A."ItemCode"=X."ItemCode" GROUP BY A."SubGroup")
+        FROM ABC_BASE A LEFT JOIN XYZ_BASE X ON A."ItemCode"=X."ItemCode" WHERE A."SubGroup" IN ({BEV_FG_VALID}) GROUP BY A."SubGroup")
         SELECT * FROM COMBINED ORDER BY "StockValue" DESC"""):
             sg = r["SubGroup"]
             if sg not in agg: agg[sg] = {k2: 0 for k2 in ["TotalSKUs","StockValue","A_Count","B_Count","C_Count","X_Count","Y_Count","Z_Count"]}; agg[sg]["SubGroup"] = sg
@@ -519,7 +536,7 @@ def aging(category: str = Query(None), whs: str = Query(None)):
              WHEN DAYS_BETWEEN(FR."FirstDate",CURRENT_DATE)<=60 THEN '31-60'
              WHEN DAYS_BETWEEN(FR."FirstDate",CURRENT_DATE)<=90 THEN '61-90'
              ELSE '90+' END AS "Bucket",
-        COUNT(DISTINCT W."ItemCode") AS "Items",ROUND(SUM(W."OnHand"),0) AS "Qty",ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "Value"
+        COUNT(DISTINCT W."ItemCode") AS "Items",ROUND(SUM(W."OnHand"),2) AS "Qty",ROUND(SUM(W."StockValue"),2) AS "Value"
         FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
         JOIN (SELECT N."ItemCode",N."Warehouse",MIN(N."DocDate") AS "FirstDate" FROM {db}.OINM N WHERE N."InQty">0 GROUP BY N."ItemCode",N."Warehouse") FR
              ON W."ItemCode"=FR."ItemCode" AND W."WhsCode"=FR."Warehouse"
@@ -537,7 +554,7 @@ def aging_drill(bucket: str = Query("0-30"), category: str = Query(None), whs: s
     for db in get_dbs(category):
         combined.extend(q(f"""SELECT G."ItmsGrpNam" AS "Category",W."ItemCode",M."ItemName",W."WhsCode",
         TO_DATE(FR."FirstDate") AS "FirstReceiptDate",DAYS_BETWEEN(FR."FirstDate",CURRENT_DATE) AS "DaysSitting",
-        ROUND(W."OnHand",0) AS "Qty",ROUND(W."OnHand"*M."LastPurPrc",0) AS "Value"
+        ROUND(W."OnHand",2) AS "Qty",ROUND(W."StockValue",2) AS "Value"
         FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
         JOIN (SELECT N."ItemCode",N."Warehouse",MIN(N."DocDate") AS "FirstDate" FROM {db}.OINM N WHERE N."InQty">0 GROUP BY N."ItemCode",N."Warehouse") FR
              ON W."ItemCode"=FR."ItemCode" AND W."WhsCode"=FR."Warehouse"
@@ -550,34 +567,36 @@ def aging_drill(bucket: str = Query("0-30"), category: str = Query(None), whs: s
 # ════════════ ITEM TRACE ════════════
 @app.get("/api/trace_subgroups")
 def trace_subgroups(category: str = Query("FINISHED")):
-    cat = (category or 'FINISHED').upper()
+    cat = category.upper() if category else ''
     dbs = [DB3] if cat in ('RAW MATERIAL', 'PACKAGING MATERIAL') else ALL_DBS
-    cat_f = f"AND G.\"ItmsGrpNam\"='{cat}'" if cat in ('RAW MATERIAL','PACKAGING MATERIAL') else "AND G.\"ItmsGrpNam\"='FINISHED'"
+    cat_f = f"AND G.\"ItmsGrpNam\"='{cat}'" if category else "AND G.\"ItmsGrpNam\" IN ('FINISHED','RAW MATERIAL','PACKAGING MATERIAL')" if cat in ('RAW MATERIAL','PACKAGING MATERIAL') else "AND G.\"ItmsGrpNam\"='FINISHED'"
+    valid = BEV_FG_VALID if cat == 'FINISHED' else (BEV_PM_VALID if cat == 'PACKAGING MATERIAL' else BEV_RM_VALID)
     seen = set(); result = []
     for db in dbs:
         for r in q(f"""SELECT M."U_Sub_Group" AS "SubGroup",COUNT(DISTINCT M."ItemCode") AS "SKUs",
-        ROUND(COALESCE(SUM(W."OnHand"),0),0) AS "OnHand",ROUND(COALESCE(SUM(W."OnHand"*M."LastPurPrc"),0),0) AS "StockValue"
+        ROUND(COALESCE(SUM(W."OnHand"),0),0) AS "OnHand",ROUND(COALESCE(SUM(W."StockValue"),0),0) AS "StockValue"
         FROM {db}.OITM M JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
         LEFT JOIN {db}.OITW W ON M."ItemCode"=W."ItemCode"
         WHERE M."InvntItem"='Y' AND M."U_Unit"='{UNIT}' {cat_f}
-          AND M."U_Sub_Group" IS NOT NULL AND M."U_Sub_Group"!=''
+          AND M."U_Sub_Group" IN ({valid})
         GROUP BY M."U_Sub_Group" ORDER BY SUM(W."OnHand") DESC NULLS LAST"""):
             if r["SubGroup"] not in seen: seen.add(r["SubGroup"]); result.append(r)
     return JSONResponse(content={"data": result})
 
 @app.get("/api/trace_items")
 def trace_items(category: str = Query("FINISHED"), subgroup: str = Query(None)):
-    cat = (category or 'FINISHED').upper()
-    dbs = [DB3] if cat in ('RAW MATERIAL', 'PACKAGING MATERIAL') else ALL_DBS
-    cat_f = f"AND G.\"ItmsGrpNam\"='{cat}'" if cat in ('RAW MATERIAL','PACKAGING MATERIAL') else "AND G.\"ItmsGrpNam\"='FINISHED'"
+    cat = category.upper() if category else ''
+    dbs = get_dbs(category)
+    cat_f = f"AND G.\"ItmsGrpNam\"='{cat}'" if category else "AND G.\"ItmsGrpNam\" IN ('FINISHED','RAW MATERIAL','PACKAGING MATERIAL')" if cat in ('RAW MATERIAL','PACKAGING MATERIAL') else "AND G.\"ItmsGrpNam\"='FINISHED'"
+    valid = BEV_FG_VALID if cat == 'FINISHED' else (BEV_PM_VALID if cat == 'PACKAGING MATERIAL' else BEV_RM_VALID)
     sg = f"AND M.\"U_Sub_Group\"='{safe(subgroup)}'" if subgroup else ""
     combined = []
     for db in dbs:
         combined.extend(q(f"""SELECT M."ItemCode",M."ItemName",COALESCE(M."U_Sub_Group",'–') AS "SubGroup",COALESCE(M."U_Variety",'–') AS "Variety",
-        ROUND(COALESCE(SUM(W."OnHand"),0),0) AS "OnHand",ROUND(COALESCE(SUM(W."OnHand"*M."LastPurPrc"),0),0) AS "StockValue"
+        ROUND(COALESCE(SUM(W."OnHand"),0),0) AS "OnHand",ROUND(COALESCE(SUM(W."StockValue"),0),0) AS "StockValue"
         FROM {db}.OITM M JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
         LEFT JOIN {db}.OITW W ON M."ItemCode"=W."ItemCode"
-        WHERE M."InvntItem"='Y' AND M."U_Unit"='{UNIT}' {cat_f} {sg}
+        WHERE M."InvntItem"='Y' AND M."U_Unit"='{UNIT}' {cat_f} AND M."U_Sub_Group" IN ({valid}) {sg}
         GROUP BY M."ItemCode",M."ItemName",M."U_Sub_Group",M."U_Variety"
         ORDER BY SUM(W."OnHand") DESC NULLS LAST,M."ItemName" """))
     return JSONResponse(content={"data": combined})
@@ -590,7 +609,7 @@ def trace_header(item: str = Query("")):
         M."U_Unit",M."U_Sub_Group" AS "SubGroup",M."U_Variety" AS "Variety",G."ItmsGrpNam" AS "Category",
         ROUND(M."LastPurPrc",4) AS "LastPrice",
         ROUND(COALESCE(SUM(W."OnHand"),0),0) AS "TotalOnHand",
-        ROUND(COALESCE(SUM(W."OnOrder"),0),0) AS "TotalOnOrder",ROUND(COALESCE(SUM(W."OnHand"*M."LastPurPrc"),0),2) AS "StockValue"
+        ROUND(COALESCE(SUM(W."OnOrder"),0),0) AS "TotalOnOrder",ROUND(COALESCE(SUM(W."StockValue"),0),2) AS "StockValue"
         FROM {db}.OITM M JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
         LEFT JOIN {db}.OITW W ON M."ItemCode"=W."ItemCode"
         WHERE M."ItemCode"='{s}'
@@ -652,7 +671,7 @@ def pm_bom(item: str = Query("")):
             COALESCE(M."U_Sub_Group",'–') AS "SubGroup",
             ROUND(L."Quantity",4) AS "QtyPerUnit",
             ROUND(COALESCE(SUM(W."OnHand"),0),0) AS "FGOnHand",
-            ROUND(COALESCE(SUM(W."OnHand"*M."LastPurPrc"),0),0) AS "FGStockValue"
+            ROUND(COALESCE(SUM(W."StockValue"),0),0) AS "FGStockValue"
         FROM {db}.ITT1 L
         JOIN {db}.OITM M ON L."Father"=M."ItemCode"
         LEFT JOIN {db}.OITW W ON L."Father"=W."ItemCode"
@@ -728,11 +747,11 @@ def pm_summary(item:str=Query(""), period:int=Query(12)):
             ROUND(SUM(CASE WHEN N."InQty">0 AND ({before_p}) THEN N."InQty" ELSE 0 END)
                  -SUM(CASE WHEN N."OutQty">0 AND ({before_p}) THEN N."OutQty" ELSE 0 END),0) AS "OpeningQty",
             ROUND(SUM(CASE WHEN N."InQty">0 AND ({before_p}) THEN N."InQty"*N."Price" ELSE 0 END)
-                 -SUM(CASE WHEN N."OutQty">0 AND ({before_p}) THEN N."OutQty"*N."Price" ELSE 0 END),0) AS "OpeningValue",
+                 -SUM(CASE WHEN N."OutQty">0 AND ({before_p}) THEN N."OutQty"*N."Price" ELSE 0 END),2) AS "OpeningValue",
             ROUND(SUM(CASE WHEN N."InQty">0 AND N."TransType" IN (20,67) {in_p} THEN N."InQty" ELSE 0 END),0) AS "PurchaseQty",
-            ROUND(SUM(CASE WHEN N."InQty">0 AND N."TransType" IN (20,67) {in_p} THEN N."InQty"*N."Price" ELSE 0 END),0) AS "PurchaseValue",
+            ROUND(SUM(CASE WHEN N."InQty">0 AND N."TransType" IN (20,67) {in_p} THEN N."InQty"*N."Price" ELSE 0 END),2) AS "PurchaseValue",
             ROUND(SUM(CASE WHEN N."OutQty">0 AND N."TransType" IN (60,202) {in_p} THEN N."OutQty" ELSE 0 END),0) AS "ConsumptionQty",
-            ROUND(SUM(CASE WHEN N."OutQty">0 AND N."TransType" IN (60,202) {in_p} THEN N."OutQty"*N."Price" ELSE 0 END),0) AS "ConsumptionValue",
+            ROUND(SUM(CASE WHEN N."OutQty">0 AND N."TransType" IN (60,202) {in_p} THEN N."OutQty"*N."Price" ELSE 0 END),2) AS "ConsumptionValue",
             ROUND(SUM(CASE WHEN N."OutQty">0 AND N."TransType" IN (60,202)
                 AND N."DocDate">=ADD_MONTHS(CURRENT_DATE,-3) THEN N."OutQty" ELSE 0 END),0) AS "Last3M",
             ROUND(SUM(CASE WHEN N."OutQty">0 AND N."TransType" IN (60,202)
@@ -752,13 +771,13 @@ def pm_summary(item:str=Query(""), period:int=Query(12)):
             for k in agg_b: agg_b[k]+=float(bil[0].get(k) or 0)
         cls=q(f"""
         SELECT ROUND(COALESCE(SUM(W."OnHand"),0),0) AS "ClosingQty",
-               ROUND(COALESCE(SUM(W."OnHand"*M."LastPurPrc"),0),0) AS "ClosingValue"
+               ROUND(COALESCE(SUM(W."StockValue"),0),2) AS "ClosingValue"
         FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode"
         WHERE W."ItemCode"='{s}'""")
         if cls:
             for k in agg_c: agg_c[k]+=float(cls[0].get(k) or 0)
         whs=q(f"""
-        SELECT W."WhsCode", WH."WhsName", ROUND(W."OnHand",0) AS "OnHand"
+        SELECT W."WhsCode", WH."WhsName", ROUND(W."OnHand",2) AS "OnHand"
         FROM {db}.OITW W JOIN {db}.OWHS WH ON W."WhsCode"=WH."WhsCode"
         WHERE W."ItemCode"='{s}' AND W."OnHand"!=0
         ORDER BY W."OnHand" DESC""")
@@ -782,8 +801,22 @@ def fg_pm_summary(item:str=Query(""), period:int=Query(12)):
         before_p='1=0';in_p=''
     combined=[]
     for db in ALL_DBS:
-        r=q(f"""
-        SELECT FG."FGCode",FG."FGName",FG."SubGroup",FG."QtyPerUnit",
+        fgs_query = """
+            SELECT L."Father" AS "FGCode",M."ItemName" AS "FGName",
+                   COALESCE(M."U_Sub_Group",'–') AS "SubGroup",
+                   ROUND(SUM(L."Quantity"),4) AS "QtyPerUnit"
+            FROM {db}.ITT1 L JOIN {db}.OITM M ON L."Father"=M."ItemCode"
+            WHERE L."Code"='{s}'
+            GROUP BY L."Father",M."ItemName",M."U_Sub_Group"
+        """.replace("{db}", db).replace("{s}", s)
+        fgs = list(q(fgs_query))
+        
+        if not fgs: continue
+        
+        fg_in = "','".join([safe(f["FGCode"]) for f in fgs])
+        
+        r_query = """
+        SELECT N."ItemCode" AS "FGCode",
                ROUND(SUM(CASE WHEN N."InQty">0 AND ({before_p}) THEN N."InQty" ELSE 0 END)
                     -SUM(CASE WHEN N."OutQty">0 AND ({before_p}) THEN N."OutQty" ELSE 0 END),0) AS "OpeningQty",
                ROUND(SUM(CASE WHEN N."InQty">0 {in_p} THEN N."InQty" ELSE 0 END),0) AS "ProductionQty",
@@ -792,22 +825,30 @@ def fg_pm_summary(item:str=Query(""), period:int=Query(12)):
                ROUND(SUM(CASE WHEN N."OutQty">0 {in_p} THEN N."OutQty" ELSE 0 END),0) AS "ARInvoiceQty",
                ROUND(SUM(CASE WHEN N."OutQty">0 AND N."TransType"=13 {in_p} THEN N."OutQty" ELSE 0 END),0) AS "ARSpecQty",
                (SELECT ROUND(COALESCE(SUM(W."OnHand"),0),0)
-                FROM {db}.OITW W WHERE W."ItemCode"=FG."FGCode") AS "ClosingQty",
-               (SELECT ROUND(COALESCE(SUM(W2."OnHand"*M2."LastPurPrc"),0),0)
+                FROM {db}.OITW W WHERE W."ItemCode"=N."ItemCode") AS "ClosingQty",
+               (SELECT ROUND(COALESCE(SUM(W2."StockValue"),0),0)
                 FROM {db}.OITW W2 JOIN {db}.OITM M2 ON W2."ItemCode"=M2."ItemCode"
-                WHERE W2."ItemCode"=FG."FGCode") AS "ClosingValue"
-        FROM (
-            SELECT L."Father" AS "FGCode",M."ItemName" AS "FGName",
-                   COALESCE(M."U_Sub_Group",'–') AS "SubGroup",
-                   ROUND(SUM(L."Quantity"),4) AS "QtyPerUnit"
-            FROM {db}.ITT1 L JOIN {db}.OITM M ON L."Father"=M."ItemCode"
-            WHERE L."Code"='{s}'
-            GROUP BY L."Father",M."ItemName",M."U_Sub_Group"
-        ) FG
-        LEFT JOIN {db}.OINM N ON FG."FGCode"=N."ItemCode"
-        GROUP BY FG."FGCode",FG."FGName",FG."SubGroup",FG."QtyPerUnit"
-        ORDER BY "ClosingQty" DESC""")
-        combined.extend(r)
+                WHERE W2."ItemCode"=N."ItemCode") AS "ClosingValue"
+        FROM {db}.OINM N
+        WHERE N."ItemCode" IN ('{fg_in}')
+        GROUP BY N."ItemCode"
+        """.replace("{db}", db).replace("{before_p}", before_p).replace("{in_p}", in_p).replace("{fg_in}", fg_in)
+        r = list(q(r_query))
+        
+        n_map = {row["FGCode"]: row for row in r}
+        for f in fgs:
+            n_data = n_map.get(f["FGCode"], {})
+            f.update({
+                "OpeningQty": n_data.get("OpeningQty", 0),
+                "ProductionQty": n_data.get("ProductionQty", 0),
+                "ProdSpecQty": n_data.get("ProdSpecQty", 0),
+                "GRQty": n_data.get("GRQty", 0),
+                "ARInvoiceQty": n_data.get("ARInvoiceQty", 0),
+                "ARSpecQty": n_data.get("ARSpecQty", 0),
+                "ClosingQty": n_data.get("ClosingQty", 0),
+                "ClosingValue": n_data.get("ClosingValue", 0)
+            })
+            combined.append(f)
     agg={}
     for row in combined:
         fg=row["FGCode"]
@@ -815,7 +856,7 @@ def fg_pm_summary(item:str=Query(""), period:int=Query(12)):
             agg[fg]={**row,"OpeningQty":0,"ProductionQty":0,"ProdSpecQty":0,"GRQty":0,"ARInvoiceQty":0,"ARSpecQty":0,"ClosingQty":0,"ClosingValue":0}
         for k in ["OpeningQty","ProductionQty","ProdSpecQty","GRQty","ARInvoiceQty","ARSpecQty","ClosingQty","ClosingValue"]:
             agg[fg][k]+=float(row.get(k) or 0)
-    items=[{**v,**{k:round(v[k],0) for k in ["OpeningQty","ProductionQty","ProdSpecQty","GRQty","ARInvoiceQty","ARSpecQty","ClosingQty","ClosingValue"]}} for v in agg.values()]
+    items=[{**v,**{k:round(v[k],2) for k in ["OpeningQty","ProductionQty","ProdSpecQty","GRQty","ARInvoiceQty","ARSpecQty","ClosingQty","ClosingValue"]}} for v in agg.values()]
     items.sort(key=lambda x:-(x.get("ClosingQty") or 0))
     # Add per-FG warehouse breakdown
     if items:
@@ -823,7 +864,7 @@ def fg_pm_summary(item:str=Query(""), period:int=Query(12)):
         whs_map={}
         for db in ALL_DBS:
             whs=q(f"""
-            SELECT W."ItemCode" AS "FGCode",W."WhsCode",WH."WhsName",ROUND(W."OnHand",0) AS "OnHand"
+            SELECT W."ItemCode" AS "FGCode",W."WhsCode",WH."WhsName",ROUND(W."OnHand",2) AS "OnHand"
             FROM {db}.OITW W JOIN {db}.OWHS WH ON W."WhsCode"=WH."WhsCode"
             WHERE W."ItemCode" IN ('{fg_in}') AND W."OnHand"!=0
             ORDER BY W."OnHand" DESC""")
@@ -838,7 +879,7 @@ def fg_pm_summary(item:str=Query(""), period:int=Query(12)):
     totals={"OpeningQty":0,"ProductionQty":0,"ProdSpecQty":0,"GRQty":0,"ARInvoiceQty":0,"ARSpecQty":0,"ClosingQty":0,"ClosingValue":0}
     for row in items:
         for k in totals: totals[k]+=float(row.get(k) or 0)
-    for k in totals: totals[k]=round(totals[k],0)
+    for k in totals: totals[k]=round(totals[k],2)
     return JSONResponse(content={"totals":totals,"items":items})
 
 # ════════════ PLANNING ════════════
@@ -857,7 +898,7 @@ def planning(subgroup: str = Query(None)):
         WHERE N."OutQty">0 AND N."DocDate">=ADD_DAYS(CURRENT_DATE,-90) AND I."U_Unit"='{UNIT}'
         GROUP BY N."ItemCode")
         SELECT M."ItemCode",M."ItemName",COALESCE(M."U_Sub_Group",'–') AS "SubGroup",
-        ROUND(SUM(W."OnHand"),0) AS "TotalOnHand",ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "StockValue",
+        ROUND(SUM(W."OnHand"),2) AS "TotalOnHand",ROUND(SUM(W."StockValue"),2) AS "StockValue",
         ROUND(COALESCE(C."Out30d",0),0) AS "Out30d",ROUND(COALESCE(C."Out30_60d",0),0) AS "Out30_60d",
         ROUND(COALESCE(C."Out90d",0)/90,1) AS "AvgDailyOut",ROUND(COALESCE(C."Out90d",0)/3,0) AS "AvgMonthlyOut",
         CASE WHEN COALESCE(C."Out90d",0)=0 THEN -1 ELSE ROUND(SUM(W."OnHand")/(COALESCE(C."Out90d",0)/90),0) END AS "DaysOfStockLeft",
@@ -870,7 +911,7 @@ def planning(subgroup: str = Query(None)):
         FROM {db}.OITM M JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
         LEFT JOIN {db}.OITW W ON M."ItemCode"=W."ItemCode"
         LEFT JOIN CONSUMPTION C ON M."ItemCode"=C."ItemCode"
-        WHERE G."ItmsGrpNam"='FINISHED' AND M."InvntItem"='Y' AND M."U_Unit"='{UNIT}' AND W."OnHand">0 {sg}
+        WHERE G."ItmsGrpNam"='FINISHED' AND M."InvntItem"='Y' AND M."U_Unit"='{UNIT}' AND W."OnHand">0 AND M."U_Sub_Group" IN ({BEV_FG_VALID}) {sg}
         GROUP BY M."ItemCode",M."ItemName",M."U_Sub_Group",C."Out30d",C."Out30_60d",C."Out90d",C."LastMoveDate",M."CreateDate"
         ORDER BY "DaysOfStockLeft" ASC"""))
     combined.sort(key=lambda x: (x.get("DaysOfStockLeft") if (x.get("DaysOfStockLeft") or -1) >= 0 else 99999))
@@ -898,7 +939,7 @@ def debug_rm_pm():
 
     # 3. Stock with no unit filter
     stock = q(f"""SELECT G."ItmsGrpNam", COUNT(DISTINCT W."ItemCode") AS "SKUs",
-        ROUND(SUM(W."OnHand"),0) AS "Qty"
+        ROUND(SUM(W."OnHand"),2) AS "Qty"
         FROM {DB3}.OITW W JOIN {DB3}.OITM M ON W."ItemCode"=M."ItemCode"
         JOIN {DB3}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
         WHERE M."InvntItem"='Y'
@@ -909,7 +950,7 @@ def debug_rm_pm():
 
     # 4. With BEVERAGES filter
     stock_bev = q(f"""SELECT G."ItmsGrpNam", COUNT(DISTINCT W."ItemCode") AS "SKUs",
-        ROUND(SUM(W."OnHand"),0) AS "Qty"
+        ROUND(SUM(W."OnHand"),2) AS "Qty"
         FROM {DB3}.OITW W JOIN {DB3}.OITM M ON W."ItemCode"=M."ItemCode"
         JOIN {DB3}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
         WHERE M."InvntItem"='Y' AND M."U_Unit"='BEVERAGES'
@@ -942,7 +983,7 @@ async def chat(request: Request):
 @app.get("/", response_class=HTMLResponse)
 async def serve():
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates", "dashboard_beverages.html"), "r", encoding="utf-8") as f:
-        return HTMLResponse(content=f.read())
+        return HTMLResponse(content=f.read(), headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"})
 
 @app.get("/conveyor", response_class=HTMLResponse)
 async def conveyor():
@@ -950,4 +991,4 @@ async def conveyor():
         return HTMLResponse(content=f.read())
 
 if __name__ == "__main__":
-    uvicorn.run(app, host="0.0.0.0", port=8006)
+    uvicorn.run(app, host="localhost", port=8006)

@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Jivo Oil — Inventory Control</title>
 <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&display=swap" rel="stylesheet">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
+<script src="/static/js/chart.umd.min.js"></script>
+<script src="/static/js/chartjs-plugin-datalabels.min.js"></script>
 <style>
 :root{
   --bg:#f4f5f7;--side:#13151c;--card:#fff;--tx:#111;--tx2:#444;
@@ -283,6 +283,8 @@ select.filter-sel{padding:5px 10px;border:2px solid var(--bd);border-radius:18px
    <button class="pl" data-c="FINISHED">Finished</button>
    <button class="pl" data-c="RAW MATERIAL">Raw Material</button>
    <button class="pl" data-c="PACKAGING MATERIAL">Packaging</button>
+   <button class="pl" data-c="TRADING ITEMS">Trading</button>
+   <button class="pl" data-c="GIFT PACK">Gift Pack</button>
   </div>
   <button class="btn" onclick="load()">↻ Refresh</button>
   <div class="sep"></div>
@@ -375,8 +377,10 @@ select.filter-sel{padding:5px 10px;border:2px solid var(--bd);border-radius:18px
     <input class="sr" id="mvS" placeholder="Search item/category..." oninput="rMV()" style="width:200px">
    </div>
    <div id="mvN" class="note" style="display:none"></div>
-   <div class="tc"><div class="tb"><h3 id="mvH">Daily Movement</h3><span class="cnt" id="mvC"></span></div><div class="ts" id="mvT"><div class="ld">Loading...</div></div></div>
-  </div>
+   <div id="mvK" style="margin-bottom:12px"></div>
+   <div class="tc">
+    <div class="tb"><h3 id="mvH">Daily Movement</h3><span class="cnt" id="mvC"></span></div><div class="ts" id="mvT"><div class="ld">Loading...</div></div></div>
+   </div>
 
   <!-- MOVERS -->
   <div class="sec" id="s-movers">
@@ -556,13 +560,16 @@ select.filter-sel{padding:5px 10px;border:2px solid var(--bd);border-radius:18px
 </div>
 
 <div class="mo" id="modal"><div class="md"><div class="md-h"><h3 id="mT">Detail</h3><button class="md-x" onclick="xM()">✕</button></div><div class="md-b"><div class="ts" id="mB"></div></div></div></div>
+<div class="mo" id="kpiModal" style="display:none;"><div class="md" style="max-width:600px;"><div class="md-h"><h3 id="kpiModalTitle">Movement KPI Details</h3><button class="md-x" onclick="closeKPIPopup()">✕</button></div><div class="md-b" id="kpiModalBody"></div></div></div>
 <button class="cf" onclick="tc()">🤖</button>
 <div class="cp" id="cP"><div class="cp-h"><span>AI Assistant</span><button class="cp-x" onclick="tc()">✕</button></div><div class="cp-b" id="cB"><div class="cm a"><div class="bl">Ask about inventory, planning, or any analysis.</div></div></div><div class="cp-i"><input id="cI" placeholder="Ask..." onkeydown="if(event.key==='Enter')sC()"><button onclick="sC()">Send</button></div></div>
 
 <script>
-Chart.register(ChartDataLabels);
-Chart.defaults.set('plugins.datalabels',{display:false});
-Chart.defaults.font.family='Nunito';Chart.defaults.font.weight=600;Chart.defaults.font.size=13;
+    try {
+      Chart.register(ChartDataLabels);
+      Chart.defaults.set('plugins.datalabels', { display: false });
+      Chart.defaults.font.family = 'Nunito'; Chart.defaults.font.weight = 600; Chart.defaults.font.size = 13;
+    } catch (e) { console.warn('Chart init failed (Chart.js may not be loaded):', e); }
 
 // ── STATE ──
 let S='dash',C='',SCH='jivo_oil',ch={},DIVISION='oils';
@@ -626,11 +633,11 @@ function initMultiOwner(menuId,labelId,selSet,owners,onChangeCb){
 let biDays=30,biType='all',biSGData=[],biItemCache={},biCustomFrom='',biCustomTo='';
 let abType='all',abComboF='all',abSGData=[],abItemCache={};
 let plD=[],plType='all',plAlertF='all';
-let traceCategory='FINISHED',traceSG=null,traceAllItems=[],traceCode='',traceName='',traceDays=0,traceMonth='',traceTypeFilter=[];
+let traceCategory='FINISHED',traceSG=null,traceAllItems=[],traceCode='',traceName='',traceDays=0,traceMonth='',traceTypeFilter=[],traceActiveTab='log';
 let whAllData=[],whItemCache={};
 
 // ── FORMATTERS ──
-function F(n){if(n==null)return'–';n=+n;if(isNaN(n))return'–';let s=n<0?'-':'';n=Math.abs(n);if(n>=1e7)return s+'₹'+(n/1e7).toFixed(2)+' Cr';if(n>=1e5)return s+'₹'+(n/1e5).toFixed(2)+' L';if(n>=1e3)return s+'₹'+(n/1e3).toFixed(1)+'K';return s+'₹'+n.toLocaleString('en-IN')}
+function F(n){if(n==null)return'–';n=+n;if(isNaN(n))return'–';let s=n<0?'-':'';return s+'₹'+Math.round(Math.abs(n)).toLocaleString('en-IN')}
 function Fs(n){if(!n)return'0';n=+n;if(n>=1e7)return(n/1e7).toFixed(1)+'Cr';if(n>=1e5)return(n/1e5).toFixed(1)+'L';if(n>=1e3)return(n/1e3).toFixed(0)+'K';return n+''}
 function N(n){if(n==null)return'–';return(+n).toLocaleString('en-IN')}
 function FV(n){return`<span class="inv-val-wrap" onclick="showLoginModal()"><span class="inv-val">${F(n)}</span><span class="inv-lock">🔒</span></span>`}
@@ -674,10 +681,42 @@ function dc(i){if(ch[i]){ch[i].destroy();delete ch[i]}}
 function mc(i,c){dc(i);const x=document.getElementById(i);if(!x)return;ch[i]=new Chart(x.getContext('2d'),c)}
 function oM(t){document.getElementById('mT').textContent=t;document.getElementById('modal').classList.add('sh')}
 function xM(){document.getElementById('modal').classList.remove('sh')}
+function showKPIPopup(status, count, value, totalValue){
+  const statusIcons = {'NON-MOVING': '🔒', 'SLOW': '🐌', 'MEDIUM': '⚡', 'FAST': '🚀'};
+  const statusColors = {'NON-MOVING': '#dc2626', 'SLOW': '#d97706', 'MEDIUM': '#059669', 'FAST': '#10b981'};
+  const statusLabels = {'NON-MOVING': 'Non-Moving Items', 'SLOW': 'Slow Moving Items', 'MEDIUM': 'Medium Moving Items', 'FAST': 'Fast Moving Items'};
+  const percentage = ((parseFloat(value) / parseFloat(totalValue)) * 100).toFixed(1);
+  
+  document.getElementById('kpiModalTitle').textContent = `📊 ${statusLabels[status]} Details`;
+  document.getElementById('kpiModalBody').innerHTML = `
+    <div style="padding:16px;">
+      <div style="background:#fefce8;border:1px solid #fde047;border-radius:8px;padding:12px;margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="font-size:24px;">${statusIcons[status]}</div>
+          <div>
+            <div style="font-size:16px;font-weight:800;color:${statusColors[status]};">${N(count)}</div>
+            <div style="font-size:12px;color:#713f12;">${FV(value)} value</div>
+            <div style="font-size:11px;color:#6b7280;">${percentage}% of total inventory value</div>
+          </div>
+        </div>
+      </div>
+      <div style="font-size:13px;line-height:1.6;color:var(--tx2);">
+        ${status === 'NON-MOVING' ? 'These items have had zero sales or movement in the selected period, representing stagnant capital that should be reviewed for potential clearance or promotion.' : ''}
+        ${status === 'SLOW' ? 'These items have very low movement velocity and may require inventory optimization or marketing focus.' : ''}
+        ${status === 'MEDIUM' ? 'These items have moderate movement and represent stable inventory turnover.' : ''}
+        ${status === 'FAST' ? 'These items have high movement velocity and are key contributors to sales.' : ''}
+      </div>
+    </div>
+  `;
+  document.getElementById('kpiModal').style.display = 'block';
+}
+function closeKPIPopup(){
+  document.getElementById('kpiModal').style.display = 'none';
+}
 function toggleSide(){const s=document.getElementById('sidebar'),btn=document.querySelector('.side-toggle');s.classList.toggle('collapsed');btn.textContent=s.classList.contains('collapsed')?'☰':'✕'}
 function setSchema(s,btn){SCH=s;document.querySelectorAll('.schema-btn').forEach(b=>b.classList.remove('on'));btn.classList.add('on');moItemCache={};biItemCache={};abItemCache={};whItemCache={};load()}
-function switchDivision(div){
-  if(div===DIVISION)return;
+function switchDivision(div,force=false){
+  if(!force && div===DIVISION)return;
   DIVISION=div;
   // Update branding
   const logo=document.getElementById('divLogo');
@@ -690,13 +729,13 @@ function switchDivision(div){
     title.textContent='Jivo Beverages';
     oilsBtn.style.background='transparent';oilsBtn.style.color='rgba(255,255,255,0.4)';oilsBtn.style.boxShadow='none';oilsBtn.style.fontWeight='700';
     bevBtn.style.background='#0ea5e9';bevBtn.style.color='#fff';bevBtn.style.boxShadow='0 2px 8px rgba(14,165,233,0.4)';bevBtn.style.fontWeight='800';
-    schemaBadge.style.display='none';
+    if(schemaBadge) schemaBadge.style.display='none';
   } else {
     logo.textContent='J';logo.style.background='linear-gradient(135deg,#5046e5,#7c3aed)';logo.style.fontSize='17px';
     title.textContent='Jivo Oil';
     oilsBtn.style.background='#5046e5';oilsBtn.style.color='#fff';oilsBtn.style.boxShadow='0 2px 8px rgba(80,70,229,0.4)';oilsBtn.style.fontWeight='800';
     bevBtn.style.background='transparent';bevBtn.style.color='rgba(255,255,255,0.4)';bevBtn.style.boxShadow='none';bevBtn.style.fontWeight='700';
-    schemaBadge.style.display='';
+    if(schemaBadge) schemaBadge.style.display='';
   }
   // Clear all caches
   moItemCache={};moRawCache={};biItemCache={};abItemCache={};whItemCache={};mvD_data=[];whAllData=[];
@@ -721,7 +760,7 @@ document.querySelectorAll('.ni').forEach(n=>n.onclick=()=>{
 });
 document.querySelectorAll('#cpls .pl').forEach(p=>p.onclick=()=>{
   document.querySelectorAll('#cpls .pl').forEach(x=>x.classList.remove('on'));p.classList.add('on');C=p.dataset.c;
-  moItemCache={};biItemCache={};abItemCache={};whItemCache={};load()
+  moItemCache={};moRawCache={};biItemCache={};abItemCache={};whItemCache={};load()
 });
 function pg(id,cb){document.querySelectorAll(`#${id} .pl`).forEach(p=>p.onclick=()=>{document.querySelectorAll(`#${id} .pl`).forEach(x=>x.classList.remove('on'));p.classList.add('on');cb(p.dataset.v)})}
 function load(){({dash:lD,stock:lWHStock,move:lMV,movers:lMO,billing:lBI,abc:lABCXYZ,aging:lAG,trace:lTrace,planning:lPlan})[S]?.()}
@@ -730,10 +769,14 @@ function load(){({dash:lD,stock:lWHStock,move:lMV,movers:lMO,billing:lBI,abc:lAB
 async function lD(){
   initMultiWhs('mvWhsMenu','mvWhsLabel',mvWhsSel,rMV);
   initMultiWhs('moWhsMenu','moWhsLabel',moWhsSel,()=>{moItemCache={};moRawCache={};lMO()});
-  const k=(await api('/api/kpi'+(C?'?category='+encodeURIComponent(C):'')))[0]||{};
-  const cat=await api('/api/categories');
-  const ms=await api('/api/movers_summary?days=30'+(C?'&category='+encodeURIComponent(C):''));
-  const bi=await api('/api/not_billed_summary');
+  document.getElementById('dK').innerHTML='<div style="padding:18px 0;color:var(--mt);font-weight:700;font-size:13px">⏳ Loading dashboard data from SAP HANA...</div>';
+  const [kArr,cat,ms,bi]=await Promise.all([
+    api('/api/kpi'+(C?'?category='+encodeURIComponent(C):'')),
+    api('/api/categories'),
+    api('/api/movers_summary?days=30'+(C?'&category='+encodeURIComponent(C):'')),
+    api('/api/not_billed_summary')
+  ]);
+  const k=kArr[0]||{};
   const nm=ms.find(x=>x.Status==='NON-MOVING')||{Count:0,Value:0};
   const b30=bi.find(x=>x.Period==='30 Days')||{NotBilledSKUs:0,NotBilledValue:0};
   document.getElementById('dK').innerHTML=`<div class="kg">
@@ -797,6 +840,7 @@ function renderWhTable(data){
   const wrap=document.getElementById('whT');
   if(!data.length){wrap.innerHTML='<div class="em">No warehouses found</div>';return}
   let html=`<table class="wh-table"><thead><tr>
+   <th style="width:30px">#</th>
    <th style="width:20px"></th>
    <th>Warehouse Code</th><th>Warehouse Name</th><th>Owner</th>
    <th class="R">SKUs</th><th class="R">Qty</th><th class="R">On Order</th>
@@ -805,6 +849,7 @@ function renderWhTable(data){
   data.forEach((v,idx)=>{
     const vid=`wh-${v.WhsCode.replace(/[^a-z0-9]/gi,'_')}`;
     html+=`<tr class="wh-row" onclick="whToggle('${v.WhsCode}','${vid}',this)">
+     <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
      <td><span class="wh-chevron">›</span></td>
      <td><span class="m" style="color:var(--ac)">${v.WhsCode}</span></td>
      <td style="font-weight:700">${v.WhsName||'–'}</td>
@@ -814,7 +859,7 @@ function renderWhTable(data){
      <td class="R m" style="color:#4f46e5">${N(v.OnOrder)}</td>
      <td class="R m" style="font-weight:800;color:#059669">${FV(v.Value)}</td>
     </tr>
-    <tr class="wh-items-row" id="${vid}-items"><td colspan="8">
+    <tr class="wh-items-row" id="${vid}-items"><td colspan="9">
      <div class="wh-items-inner" id="${vid}-inner"><div class="ld" style="padding:10px">Loading items...</div></div>
     </td></tr>`;
   });
@@ -833,29 +878,33 @@ async function whToggle(whsCode,vid,row){
   if(whItemCache[whsCode]){inner.innerHTML=whItemCache[whsCode];return}
   const cat=C?`&category=${encodeURIComponent(C)}`:'';
   const d=await api(`/api/warehouse_items?whs=${encodeURIComponent(whsCode)}${cat}`);
-  const whsTotOnHand=d.reduce((s,r)=>s+(+r.OnHand||0),0);
-  const whsTotOnOrder=d.reduce((s,r)=>s+(+r.OnOrder||0),0);
-  const whsTotAvail=d.reduce((s,r)=>s+(+r.Available||0),0);
-  const whsTotVal=d.reduce((s,r)=>s+(+r.StockValue||0),0);
+  const whsTotOnHand = d.reduce((s,r)=>s+(+r.OnHand||0),0);
+  const whsTotOnOrder = d.reduce((s,r)=>s+(+r.OnOrder||0),0);
+  const whsTotComm = d.reduce((s,r)=>s+(+r.Committed||0),0);
+  const whsTotAvail = d.reduce((s,r)=>s+(+r.Available||0),0);
+  const whsTotVal = d.reduce((s,r)=>s+(+r.StockValue||0),0);
   const html=d.length?`
    <div style="padding:8px 14px;font-size:11px;font-weight:700;color:var(--mt)">
     ${d.length} items in ${whsCode}
    </div>
    <table><thead><tr>
+    <th style="width:30px">#</th>
     <th>Category</th><th>Item Code</th><th>Item Name</th><th>Sub-Group</th><th>Type</th>
-    <th class="R">On Hand</th><th class="R">On Order</th>
+    <th class="R">On Hand</th><th class="R">On Order</th><th class="R">Committed</th>
     <th class="R">Available</th><th class="R">Value</th>
-   </tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="5"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td class="R m">${N(Math.round(whsTotOnHand))}</td><td class="R m" style="color:#4f46e5">${N(Math.round(whsTotOnOrder))}</td><td class="R m" style="color:${whsTotAvail<0?'#dc2626':'#059669'}">${N(Math.round(whsTotAvail))}</td><td class="R m">${FV(whsTotVal)}</td></tr>`+
-   d.map(r=>`<tr>
+   </tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="6"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td class="R m">${N(Math.round(whsTotOnHand))}</td><td class="R m" style="color:#4f46e5">${N(Math.round(whsTotOnOrder))}</td><td class="R m" style="color:#92400e">${N(Math.round(whsTotComm))}</td><td class="R m" style="color:${Math.round(whsTotAvail)<0?'#dc2626':'#059669'}">${N(Math.round(whsTotAvail))}</td><td class="R m">${FV(Math.round(whsTotVal))}</td></tr>`+
+   d.map((r,idx)=>`<tr>
+    <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
     <td><span class="bd b-i" style="font-size:9px">${r.Category||'–'}</span></td>
     <td class="m" style="color:var(--ac)">${r.ItemCode}</td>
     <td>${r.ItemName||''}</td>
     <td style="font-size:11px;color:var(--mt)">${r.SubGroup||'–'}</td>
     <td>${typBadge(r.ItemType,r.ItemName)}</td>
-    <td class="R m">${N(r.OnHand)}</td>
-    <td class="R m" style="color:#4f46e5">${N(r.OnOrder)}</td>
-    <td class="R m" style="color:${(r.Available||0)<0?'#dc2626':'#059669'}">${N(r.Available)}</td>
-    <td class="R m" style="font-weight:800">${FV(r.StockValue)}</td>
+    <td class="R m">${N(Math.round(r.OnHand))}</td>
+    <td class="R m" style="color:#4f46e5">${N(Math.round(r.OnOrder))}</td>
+    <td class="R m" style="color:#92400e">${N(Math.round(r.Committed))}</td>
+    <td class="R m" style="color:${(Math.round(r.Available)||0)<0?'#dc2626':'#059669'}">${N(Math.round(r.Available))}</td>
+    <td class="R m" style="font-weight:800">${FV(Math.round(r.StockValue))}</td>
    </tr>`).join('')+'</tbody></table>':
    '<div class="em" style="padding:12px">No items in this warehouse</div>';
   whItemCache[whsCode]=html;inner.innerHTML=html;
@@ -901,8 +950,9 @@ function rMV(){
   const mvTotInVal=d.reduce((s,r)=>s+(+r.InValue||0),0);
   const mvTotOutVal=d.reduce((s,r)=>s+(+r.OutValue||0),0);
   document.getElementById('mvT').innerHTML=d.length?
-   `<table><thead><tr><th>Date</th><th>WH Code</th><th>Warehouse</th><th>Category</th><th>Sub-Group</th><th>Item Code</th><th>Item Name</th><th class="R">In Qty</th><th class="R">Out Qty</th><th class="R">In Value</th><th class="R">Out Value</th><th class="R">Net</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="7"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} rows)</span></td><td class="R m">${N(Math.round(mvTotInQty))}</td><td class="R m">${N(Math.round(mvTotOutQty))}</td><td class="R m">${FV(mvTotInVal)}</td><td class="R m">${FV(mvTotOutVal)}</td><td class="R m" style="color:${mvTotInVal-mvTotOutVal>=0?'#059669':'#ef4444'}">${FV(mvTotInVal-mvTotOutVal)}</td></tr>`+
-   d.map(r=>`<tr>
+   `<table><thead><tr><th style="width:30px">#</th><th>Date</th><th>WH Code</th><th>Warehouse</th><th>Category</th><th>Sub-Group</th><th>Item Code</th><th>Item Name</th><th class="R">In Qty</th><th class="R">Out Qty</th><th class="R">In Value</th><th class="R">Out Value</th><th class="R">Net</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="8"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} rows)</span></td><td class="R m">${N(Math.round(mvTotInQty))}</td><td class="R m">${N(Math.round(mvTotOutQty))}</td><td class="R m">${FV(mvTotInVal)}</td><td class="R m">${FV(mvTotOutVal)}</td><td class="R m" style="color:${mvTotInVal-mvTotOutVal>=0?'#059669':'#ef4444'}">${FV(mvTotInVal-mvTotOutVal)}</td></tr>`+
+   d.map((r,idx)=>`<tr>
+    <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
     <td class="m">${r.Date||''}</td>
     <td class="m" style="color:var(--ac)">${r.WhsCode||''}</td>
     <td style="font-size:12px;color:var(--tx2)">${r.WhsName||''}</td>
@@ -945,22 +995,27 @@ async function lMO(){
   const g=s=>sum.find(x=>x.Status===s)||{Count:0,Value:0};
   const nm=g('NON-MOVING'),sl=g('SLOW'),md=g('MEDIUM'),fa=g('FAST');
   const moLabel=moDateFrom&&moDateTo?`${moDateFrom} → ${moDateTo}`:`${moDays}d`;
+  const totalItems=sum.reduce((acc, s) => acc + s.Count, 0);
+  const totalValue=sum.reduce((acc, s) => acc + s.Value, 0);
   document.getElementById('moK').innerHTML=`<div class="kg">
-   <div class="kc k3"><div class="kc-l">Non-Moving (${moLabel})</div><div class="kc-v">${N(nm.Count)}</div><div class="kc-s">${FV(nm.Value)} stuck</div><div class="kc-bg">🔒</div></div>
-   <div class="kc k4"><div class="kc-l">Slow</div><div class="kc-v">${N(sl.Count)}</div><div class="kc-s">${FV(sl.Value)}</div><div class="kc-bg">🐌</div></div>
-   <div class="kc k1"><div class="kc-l">Medium</div><div class="kc-v">${N(md.Count)}</div><div class="kc-s">${FV(md.Value)}</div><div class="kc-bg">⚡</div></div>
-   <div class="kc k2"><div class="kc-l">Fast</div><div class="kc-v">${N(fa.Count)}</div><div class="kc-s">${FV(fa.Value)}</div><div class="kc-bg">🚀</div></div>
+   <div class="kc k3" onclick="showKPIPopup('NON-MOVING', '${nm.Count}', '${nm.Value}', '${totalValue}')" title="Items that have had zero sales or movement in last ${moDays} days. Represents stagnant capital."><div class="kc-l">Non-Moving (${moLabel})</div><div class="kc-v">${N(nm.Count)}</div><div class="kc-s">${FV(nm.Value)} stuck</div><div class="kc-bg">🔒</div></div>
+   <div class="kc k4" onclick="showKPIPopup('SLOW', '${sl.Count}', '${sl.Value}', '${totalValue}')" title="Items with very slow movement in last ${moDays} days."><div class="kc-l">Slow</div><div class="kc-v">${N(sl.Count)}</div><div class="kc-s">${FV(sl.Value)}</div><div class="kc-bg">🐌</div></div>
+   <div class="kc k1" onclick="showKPIPopup('MEDIUM', '${md.Count}', '${md.Value}', '${totalValue}')" title="Items with moderate movement in last ${moDays} days."><div class="kc-l">Medium</div><div class="kc-v">${N(md.Count)}</div><div class="kc-s">${FV(md.Value)}</div><div class="kc-bg">⚡</div></div>
+   <div class="kc k2" onclick="showKPIPopup('FAST', '${fa.Count}', '${fa.Value}', '${totalValue}')" title="Items with fast movement in last ${moDays} days."><div class="kc-l">Fast</div><div class="kc-v">${N(fa.Count)}</div><div class="kc-s">${FV(fa.Value)}</div><div class="kc-bg">🚀</div></div>
+   <div class="kc k5" style="background:linear-gradient(135deg,#dc2626,#ef4444);cursor:default;" title="Total items and value across all movement categories."><div class="kc-l">Total Items</div><div class="kc-v">${N(totalItems)}</div><div class="kc-s">${FV(totalValue)} total value</div><div class="kc-bg">📊</div></div>
   </div>`;
   const nt=document.getElementById('moN');
   if(nm.Count>0){nt.style.display='';nt.innerHTML=`<b>⚠ ${N(nm.Count)} items</b> — ZERO movement in ${moLabel} — <b>${FV(nm.Value)}</b> stuck.`}else{nt.style.display='none'}
   await lMOSGs();
 }
 async function lMOSGs(){
-  const cat=C||'FINISHED';
   const t=moType!=='all'?`&item_type=${moType}`:'';
   const moDtP=moDateFrom&&moDateTo?`&date_from=${moDateFrom}&date_to=${moDateTo}`:'';
   const whsP=moWhsSel.size>0?`&whs=${[...moWhsSel].join(',')}`:'';
-  moSGData=await api(`/api/movers_by_subgroup?days=${moDays}&category=${encodeURIComponent(cat)}${t}${moDtP}${whsP}`);
+  const catP = C ? `&category=${encodeURIComponent(C)}` : '';
+    moSGData=await api(`/api/movers_by_subgroup?days=${moDays}${t}${moDtP}${whsP}${catP}`);
+    const catOrder = {'FINISHED':1, 'RAW MATERIAL':2, 'PACKAGING MATERIAL':3};
+    moSGData.sort((a,b) => (catOrder[a.Category] || 9) - (catOrder[b.Category] || 9) || (b.StuckValue - a.StuckValue));
   moItemCache={};renderMoTable();
 }
 function moApplyDate(){moDateFrom=document.getElementById('moDateFrom').value;moDateTo=document.getElementById('moDateTo').value;if(moDateFrom&&moDateTo){moItemCache={};moRawCache={};lMO()}}
@@ -972,16 +1027,45 @@ function renderMoTable(){
   const wrap=document.getElementById('moTableWrap');
   if(!moSGData.length){wrap.innerHTML='<div class="em">No data</div>';document.getElementById('moC').textContent='0';return}
   let html=`<table class="cat-table"><thead><tr>
+   <th style="width:30px">#</th>
    <th style="width:24px"></th><th>Sub-Group</th>
+   <th style="color:var(--mt);font-weight:700">Category</th>
    <th class="R">Total SKUs</th><th class="R" style="color:#ef4444">Non-Moving</th>
    <th class="R" style="color:#f59e0b">Slow</th><th class="R" style="color:#6366f1">Medium</th>
    <th class="R" style="color:#10b981">Fast</th>
    <th class="R">Stock Value</th><th class="R" style="color:#dc2626">Stuck Value</th>
   </tr></thead><tbody>`;
+  
+  // Calculate totals first
+  console.log('moSGData:', moSGData); // Debug: Check data structure
+  const totalSKUs = moSGData.reduce((s, v) => s + (v.TotalSKUs || 0), 0);
+  const totalNonMoving = moSGData.reduce((s, v) => s + (v.NonMovingSKUs || 0), 0);
+  const totalSlow = moSGData.reduce((s, v) => s + (v.SlowSKUs || 0), 0);
+  const totalMedium = moSGData.reduce((s, v) => s + (v.MediumSKUs || 0), 0);
+  const totalFast = moSGData.reduce((s, v) => s + (v.FastSKUs || 0), 0);
+  const totalStockValue = moSGData.reduce((s, v) => s + (v.StockValue || 0), 0);
+  const totalStuckValue = moSGData.reduce((s, v) => s + (v.StuckValue || 0), 0);
+  
+  console.log('Totals:', {totalSKUs, totalNonMoving, totalSlow, totalMedium, totalFast, totalStockValue, totalStuckValue}); // Debug: Check totals
+  
+  // Add total row at the top
+  html += '<tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8">';
+  html += '<td colspan="4"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(' + moSGData.length + ' groups)</span></td>';
+  html += '<td class="R m">' + N(totalSKUs) + '</td>';
+  html += '<td class="R m" style="color:#ef4444">' + N(totalNonMoving) + '</td>';
+  html += '<td class="R m" style="color:#f59e0b">' + N(totalSlow) + '</td>';
+  html += '<td class="R m" style="color:#6366f1">' + N(totalMedium) + '</td>';
+  html += '<td class="R m" style="color:#10b981">' + N(totalFast) + '</td>';
+  html += '<td class="R m">' + FsV(totalStockValue) + '</td>';
+  html += '<td class="R m" style="color:' + (totalStuckValue > 0 ? '#dc2626' : 'var(--mt)') + '">' + (totalStuckValue > 0 ? FsV(totalStuckValue) : '–') + '</td>';
+  html += '</tr>';
+  
   moSGData.forEach((v,idx)=>{
     html+=`<tr class="cat-row" data-idx="${idx}" onclick="moToggleSG('${v.SubGroup.replace(/'/g,"\\'")}',${idx},this)">
+     <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
      <td><span class="cat-chevron">›</span></td>
      <td style="font-weight:700">${v.SubGroup}</td>
+     <td style="font-size:11px;color:var(--mt);font-weight:600">${v.Category||''}</td>
      <td class="R m">${N(v.TotalSKUs)}</td>
      <td class="R m" style="color:#ef4444">${N(v.NonMovingSKUs)}</td>
      <td class="R m" style="color:#f59e0b">${N(v.SlowSKUs)}</td>
@@ -990,7 +1074,7 @@ function renderMoTable(){
      <td class="R m">${FsV(v.StockValue)}</td>
      <td class="R m" style="color:${v.StuckValue>0?'#dc2626':'var(--mt)'}">${v.StuckValue>0?FsV(v.StuckValue):'–'}</td>
     </tr>
-    <tr class="cat-items-row" id="mo-items-${idx}"><td colspan="9"><div class="cat-items-inner" id="mo-inner-${idx}"><div class="ld" style="padding:12px">Loading...</div></div></td></tr>`;
+    <tr class="cat-items-row" id="mo-items-${idx}"><td colspan="11"><div class="cat-items-inner" id="mo-inner-${idx}"><div class="ld" style="padding:12px">Loading...</div></div></td></tr>`;
   });
   html+='</tbody></table>';
   wrap.innerHTML=html;
@@ -1001,8 +1085,9 @@ function buildMoItemsHtml(filtered){
   const moItemTotStock=filtered.reduce((s,r)=>s+(+r.TotalOnHand||0),0);
   const moItemTotOut=filtered.reduce((s,r)=>s+(+(r['Out'+moDays+'d'])||0),0);
   const moItemTotVal=filtered.reduce((s,r)=>s+(+r.StockValue||0),0);
-  return`<table><thead><tr><th>Status</th><th>Type</th><th>Item Code</th><th>Item Name</th><th>WH Code</th><th class="R">Stock</th><th class="R">${moDays}d Out</th><th class="R">Value</th><th class="R">Days Left</th><th>Last Movement</th><th>Action</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="4"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${filtered.length} items)</span></td><td>–</td><td class="R m">${N(Math.round(moItemTotStock))}</td><td class="R m">${N(Math.round(moItemTotOut))}</td><td class="R m">${FV(moItemTotVal)}</td><td colspan="3">–</td></tr>`+
-   filtered.map(r=>`<tr>
+  return`<table><thead><tr><th style="width:30px">#</th><th>Status</th><th>Type</th><th>Item Code</th><th>Item Name</th><th>WH Code</th><th class="R">Stock</th><th class="R">${moDays}d Out</th><th class="R">Value</th><th class="R">Days Left</th><th>Last Movement</th><th>Action</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="5"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${filtered.length} items)</span></td><td>–</td><td class="R m">${N(Math.round(moItemTotStock))}</td><td class="R m">${N(Math.round(moItemTotOut))}</td><td class="R m">${FV(moItemTotVal)}</td><td colspan="3">–</td></tr>`+
+   filtered.map((r,idx)=>`<tr>
+    <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
     <td>${moBadge(r.MovementStatus)}</td>
     <td>${typBadge(r.ItemType,r.ItemName)}</td>
     <td class="m">${r.ItemCode}</td><td>${r.ItemName||''}</td>
@@ -1031,7 +1116,8 @@ async function moToggleSG(sg,idx,row){
   const t=moType!=='all'?`&item_type=${moType}`:'';
   const moDtP2=moDateFrom&&moDateTo?`&date_from=${moDateFrom}&date_to=${moDateTo}`:'';
   const whsP=moWhsSel.size>0?`&whs=${[...moWhsSel].join(',')}`:'';
-  const d=await api(`/api/movers?days=${moDays}&category=${encodeURIComponent(cat)}&subgroup=${encodeURIComponent(sg)}${t}${moDtP2}${whsP}`);
+  const catP = C ? `&category=${encodeURIComponent(C)}` : '';
+    const d=await api(`/api/movers?days=${moDays}${catP}&subgroup=${encodeURIComponent(sg)}${t}${moDtP2}${whsP}`);
   moRawCache[sg]=d;
   const filtered=moStatusF!=='all'?d.filter(r=>r.MovementStatus===moStatusF):d;
   inner.innerHTML=buildMoItemsHtml(filtered);
@@ -1079,12 +1165,14 @@ function renderBiTable(){
   const biTotVal=biSGData.reduce((s,v)=>s+(+v.TotalValue||0),0);
   const biTotUnbilledVal=biSGData.reduce((s,v)=>s+(+v.NotBilledValue||0),0);
   let html=`<table class="cat-table"><thead><tr>
+   <th style="width:30px">#</th>
    <th style="width:24px"></th><th>Sub-Group</th><th class="R">Total SKUs</th>
    <th class="R" style="color:#ef4444">Not Billed</th>
    <th class="R">Total Value</th><th class="R" style="color:#dc2626">Unbilled Value</th>
-  </tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td>–</td><td><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${biSGData.length} groups)</span></td><td class="R m">${N(biTotSKUs)}</td><td class="R m" style="color:#ef4444">${N(biTotNotBilled)}</td><td class="R m">${FsV(biTotVal)}</td><td class="R m" style="color:#dc2626">${FsV(biTotUnbilledVal)}</td></tr>`;
+  </tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td></td><td><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${biSGData.length} groups)</span></td><td class="R m">${N(biTotSKUs)}</td><td class="R m" style="color:#ef4444">${N(biTotNotBilled)}</td><td class="R m">${FsV(biTotVal)}</td><td class="R m" style="color:#dc2626">${FsV(biTotUnbilledVal)}</td></tr>`;
   biSGData.forEach((v,idx)=>{
     html+=`<tr class="cat-row" data-idx="${idx}" onclick="biToggleSG('${v.SubGroup.replace(/'/g,"\\'")}',${idx},this)">
+     <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
      <td><span class="cat-chevron">›</span></td>
      <td style="font-weight:700">${v.SubGroup}</td>
      <td class="R m">${N(v.TotalSKUs)}</td>
@@ -1092,7 +1180,7 @@ function renderBiTable(){
      <td class="R m">${FsV(v.TotalValue)}</td>
      <td class="R m" style="color:#dc2626">${FsV(v.NotBilledValue)}</td>
     </tr>
-    <tr class="cat-items-row" id="bi-items-${idx}"><td colspan="6"><div class="cat-items-inner" id="bi-inner-${idx}"><div class="ld" style="padding:12px">Loading...</div></div></td></tr>`;
+    <tr class="cat-items-row" id="bi-items-${idx}"><td colspan="7"><div class="cat-items-inner" id="bi-inner-${idx}"><div class="ld" style="padding:12px">Loading...</div></div></td></tr>`;
   });
   html+='</tbody></table>';
   wrap.innerHTML=html;
@@ -1115,8 +1203,9 @@ async function biToggleSG(sg,idx,row){
   const biItemTotStock=d.reduce((s,r)=>s+(+r.CurrentStock||0),0);
   const biItemTotVal=d.reduce((s,r)=>s+(+r.StockValue||0),0);
   const html=d.length?
-   `<table><thead><tr><th>Type</th><th>Item Code</th><th>Item Name</th><th>WH Code</th><th class="R">Stock</th><th class="R">Value</th><th>Last Bill Date</th><th>Days Since Billed</th><th>Customer</th><th>Action</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="3"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td>–</td><td class="R m">${N(Math.round(biItemTotStock))}</td><td class="R m">${FV(biItemTotVal)}</td><td colspan="4">–</td></tr>`+
-   d.map(r=>`<tr>
+   `<table><thead><tr><th style="width:30px">#</th><th>Type</th><th>Item Code</th><th>Item Name</th><th>WH Code</th><th class="R">Stock</th><th class="R">Value</th><th>Last Bill Date</th><th>Days Since Billed</th><th>Customer</th><th>Action</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="4"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td>–</td><td class="R m">${N(Math.round(biItemTotStock))}</td><td class="R m">${FV(biItemTotVal)}</td><td colspan="4">–</td></tr>`+
+   d.map((r,idx)=>`<tr>
+    <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
     <td>${typBadge(r.ItemType)}</td>
     <td class="m">${r.ItemCode}</td><td>${r.ItemName||''}</td>
     <td class="m" style="color:var(--ac);font-size:11px">${r.WhsCodes||'–'}</td>
@@ -1217,14 +1306,19 @@ function buildAbItemsHtml(rows){
   const abTotStock=rows.reduce((s,r)=>s+(+r.TotalOnHand||0),0);
   const abTotVal=rows.reduce((s,r)=>s+(+r.StockValue||0),0);
   const abTotAvg=rows.reduce((s,r)=>s+(+r.AvgMonthlyOut||0),0);
-  return`<table><thead><tr><th>ABC</th><th>XYZ</th><th>Combo</th><th>Type</th><th>Rank</th><th>Item Code</th><th>Item Name</th><th class="R">Stock</th><th class="R">Value</th>
+  return`<table><thead><tr><th style="width:30px">#</th><th>ABC</th><th>XYZ</th><th>Combo</th><th>Type</th><th>Rank</th><th>Item Code</th><th>Item Name</th><th class="R">Stock</th><th class="R">Value</th>
    <th class="R"><span class="tip">AVG/MO<span class="tip-txt">Average units sold per month over last 3 months</span></span></th>
    <th class="R"><span class="tip">COV<span class="tip-txt">Coefficient of Variation — demand variability. 0=stable, &gt;1=erratic</span></span></th>
    <th class="R"><span class="tip">CUM%<span class="tip-txt">Cumulative % of total stock value. A=0–80%, B=80–95%, C=95–100%</span></span></th>
    <th>Action</th>
-  </tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="7"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${rows.length} items)</span></td><td class="R m">${N(Math.round(abTotStock))}</td><td class="R m">${FV(abTotVal)}</td><td class="R m">${N(Math.round(abTotAvg))}</td><td colspan="3">–</td></tr>`+
-  rows.map(r=>{const aC=r.ABCClass==='A'?'b-d':r.ABCClass==='B'?'b-w':'b-ok';const xC=r.XYZClass==='X'?'b-ok':r.XYZClass==='Y'?'b-w':'b-d';const cov=r.CoV>=9000?'–':r.CoV!=null?r.CoV.toFixed(2):'–';
-    return`<tr><td><span class="bd ${aC}">${r.ABCClass}</span></td><td><span class="bd ${xC}">${r.XYZClass}</span></td>
+  </tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="8"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${rows.length} items)</span></td><td class="R m">${N(Math.round(abTotStock))}</td><td class="R m">${FV(abTotVal)}</td><td class="R m">${N(Math.round(abTotAvg))}</td><td colspan="3">–</td></tr>`+
+  rows.map((r,idx)=>{
+    const aC = r.ABCClass === 'A' ? 'b-d' : r.ABCClass === 'B' ? 'b-w' : 'b-ok'; 
+    const xC = r.XYZClass === 'X' ? 'b-ok' : r.XYZClass === 'Y' ? 'b-w' : 'b-d'; 
+    const cov = r.CoV >= 9000 ? '–' : r.CoV != null ? (+r.CoV).toFixed(2) : '–';
+    return `<tr>
+    <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
+    <td><span class="bd ${aC}">${r.ABCClass}</span></td><td><span class="bd ${xC}">${r.XYZClass}</span></td>
      <td><span class="bd" style="background:${CC[r.ABCXYZClass]||'#f3f4f6'};color:${CT[r.ABCXYZClass]||'#374151'}">${r.ABCXYZClass}</span></td>
      <td>${typBadge(r.ItemType,r.ItemName)}</td><td class="m">${r.Rank}</td>
      <td class="m">${r.ItemCode}</td><td>${r.ItemName||''}</td>
@@ -1237,9 +1331,10 @@ function buildAbItemsHtml(rows){
 function renderAbTable(){
   const wrap=document.getElementById('abTableWrap');
   if(!abSGData.length){wrap.innerHTML='<div class="em">No data</div>';document.getElementById('abC').textContent='0';return}
-  let html=`<table class="cat-table"><thead><tr><th style="width:24px"></th><th>Sub-Group</th><th class="R">SKUs</th><th class="R" style="color:#ef4444">A (Top 80%)</th><th class="R" style="color:#f59e0b">B</th><th class="R" style="color:#10b981">C</th><th class="R" style="color:#059669">X (Stable)</th><th class="R" style="color:#d97706">Y</th><th class="R" style="color:#dc2626">Z (Erratic)</th><th class="R">Value</th></tr></thead><tbody>`;
+  let html=`<table class="cat-table"><thead><tr><th style="width:30px">#</th><th style="width:24px"></th><th>Sub-Group</th><th class="R">SKUs</th><th class="R" style="color:#ef4444">A (Top 80%)</th><th class="R" style="color:#f59e0b">B</th><th class="R" style="color:#10b981">C</th><th class="R" style="color:#059669">X (Stable)</th><th class="R" style="color:#d97706">Y</th><th class="R" style="color:#dc2626">Z (Erratic)</th><th class="R">Value</th></tr></thead><tbody>`;
   abSGData.forEach((v,idx)=>{
     html+=`<tr class="cat-row" data-idx="${idx}" onclick="abToggleSG('${v.SubGroup.replace(/'/g,"\\'")}',${idx},this)">
+     <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
      <td><span class="cat-chevron">›</span></td>
      <td style="font-weight:700">${v.SubGroup}</td>
      <td class="R m">${N(v.TotalSKUs)}</td>
@@ -1251,7 +1346,7 @@ function renderAbTable(){
      <td class="R m" style="color:#dc2626">${N(v.Z_Count)}</td>
      <td class="R m">${FsV(v.StockValue)}</td>
     </tr>
-    <tr class="cat-items-row" id="ab-items-${idx}"><td colspan="10"><div class="cat-items-inner" id="ab-inner-${idx}"><div class="ld" style="padding:12px">Loading...</div></div></td></tr>`;
+    <tr class="cat-items-row" id="ab-items-${idx}"><td colspan="11"><div class="cat-items-inner" id="ab-inner-${idx}"><div class="ld" style="padding:12px">Loading...</div></div></td></tr>`;
   });
   html+='</tbody></table>';
   wrap.innerHTML=html;
@@ -1305,14 +1400,15 @@ async function lAG(){
   const agTotQty=d.reduce((s,r)=>s+(+r.Qty||0),0);
   const agTotVal=d.reduce((s,r)=>s+(+r.Value||0),0);
   document.getElementById('agT').innerHTML=d.length?
-   `<table class="cat-table"><thead><tr><th style="width:24px"></th><th>Category</th><th>Bucket</th><th class="R">Items</th><th class="R">Qty</th><th class="R">Value</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td>–</td><td colspan="2"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} rows)</span></td><td class="R m">${N(agTotItems)}</td><td class="R m">${N(Math.round(agTotQty))}</td><td class="R m">${FV(agTotVal)}</td></tr>`+
+   `<table class="cat-table"><thead><tr><th style="width:30px">#</th><th style="width:24px"></th><th>Category</th><th>Bucket</th><th class="R">Items</th><th class="R">Qty</th><th class="R">Value</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td></td><td></td><td colspan="2"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} rows)</span></td><td class="R m">${N(agTotItems)}</td><td class="R m">${N(Math.round(agTotQty))}</td><td class="R m">${FV(agTotVal)}</td></tr>`+
    d.map((r,idx)=>{const cl=r.Bucket==='0-30'?'b-ok':r.Bucket==='90+'?'b-d':'b-w';
     return`<tr class="cat-row" data-idx="${idx}" onclick="drAg('${r.Bucket}','${r.Category}',${idx},this)">
+     <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
      <td><span class="cat-chevron">›</span></td>
      <td>${r.Category}</td><td><span class="bd ${cl}">${r.Bucket}d sitting</span></td>
      <td class="R m">${N(r.Items)}</td><td class="R m">${N(r.Qty)}</td><td class="R m">${FV(r.Value)}</td>
     </tr>
-    <tr class="cat-items-row" id="ag-items-${idx}"><td colspan="6"><div class="cat-items-inner" id="ag-inner-${idx}"><div class="ld" style="padding:12px">Loading...</div></div></td></tr>`}).join('')+'</tbody></table>':
+    <tr class="cat-items-row" id="ag-items-${idx}"><td colspan="7"><div class="cat-items-inner" id="ag-inner-${idx}"><div class="ld" style="padding:12px">Loading...</div></div></td></tr>`}).join('')+'</tbody></table>':
    '<div class="em">No data</div>';
 }
 
@@ -1332,8 +1428,8 @@ async function drAg(b,c,idx,row){
   const agDrillTotQty=d.reduce((s,r)=>s+(+r.Qty||0),0);
   const agDrillTotVal=d.reduce((s,r)=>s+(+r.Value||0),0);
   const html=d.length?
-   `<table><thead><tr><th>Item Code</th><th>Item Name</th><th>WH</th><th>First Receipt</th><th class="R">Days Sitting</th><th class="R">Qty</th><th class="R">Value</th><th>Action</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="5"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} rows)</span></td><td class="R m">${N(Math.round(agDrillTotQty))}</td><td class="R m">${FV(agDrillTotVal)}</td><td>–</td></tr>`+
-   d.map(r=>`<tr><td class="m">${r.ItemCode}</td><td>${r.ItemName||''}</td><td class="m">${r.WhsCode||''}</td>
+   `<table><thead><tr><th style="width:30px">#</th><th>Item Code</th><th>Item Name</th><th>WH</th><th>First Receipt</th><th class="R">Days Sitting</th><th class="R">Qty</th><th class="R">Value</th><th>Action</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="6"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} rows)</span></td><td class="R m">${N(Math.round(agDrillTotQty))}</td><td class="R m">${FV(agDrillTotVal)}</td><td>–</td></tr>`+
+   d.map((r,idx)=>`<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td class="m">${r.ItemCode}</td><td>${r.ItemName||''}</td><td class="m">${r.WhsCode||''}</td>
     <td class="m">${r.FirstReceiptDate||''}</td>
     <td class="R m" style="color:${r.DaysSitting>90?'#dc2626':r.DaysSitting>60?'#d97706':'#059669'}">${N(r.DaysSitting)}d</td>
     <td class="R m">${N(r.Qty)}</td><td class="R m">${FV(r.Value)}</td>
@@ -1349,8 +1445,8 @@ const TRACE_TYPES={
   13:{label:'Sales',icon:'💰',color:'#065f46',bg:'#d1fae5'},
   20:{label:'Purchase Delivery',icon:'📦',color:'#1e40af',bg:'#dbeafe'},
   60:{label:'Issued to Production',icon:'🏭',color:'#92400e',bg:'#fef3c7'},
-  67:{label:'Goods Receipt',icon:'📥',color:'#065f46',bg:'#d1fae5'},
-  59:{label:'WH Transfer',icon:'🔀',color:'#4c1d95',bg:'#ede9fe'},
+  67:{label:'WH Transfer',icon:'🔀',color:'#4c1d95',bg:'#ede9fe'},
+  59:{label:'Goods Receipt',icon:'📥',color:'#065f46',bg:'#d1fae5'},
   101:{label:'Production Receipt',icon:'🏗️',color:'#1e40af',bg:'#dbeafe'},
   202:{label:'Production Issue',icon:'⚙️',color:'#92400e',bg:'#fef3c7'},
   18:{label:'AP Invoice',icon:'🧾',color:'#374151',bg:'#f3f4f6'},
@@ -1503,75 +1599,75 @@ async function traceLoadDetail(){
    ${uniqueTypes.map(t=>{const tp=tType(t);return`<button class="pl" onclick="traceToggleType(${t},this)">${tp.icon} ${tp.label}</button>`}).join('')}
   </div>
   <div class="tabs">
-   <div class="tab on" onclick="traceTab('log',this)">📋 Transaction Log (${log.length})</div>
-   ${isFG?`<div class="tab" onclick="traceTab('production',this)">🏭 Production (${productionLog.length})</div>`:''}
-   ${isFG?`<div class="tab" onclick="traceTab('returns',this)">↩️ Returns (${returns.length})</div>`:''}
-   ${isFG?`<div class="tab" onclick="traceTab('disasm',this)">🔧 Disassembly (${disasm.length})</div>`:''}
-   ${isPM?`<div class="tab" onclick="traceTab('pmbom',this)">🏭 Used in FG (${pmBom.length})</div>`:''}
-   ${isPM?`<div class="tab" onclick="traceTab('pmconsumption',this)">📊 Consumption (${pmConsumption.length}m)</div>`:''}
-   ${isPM?`<div class="tab" onclick="traceTab('pminvoices',this)">🚚 Purchase Receipts (${pmInvoices.length})</div>`:''}
-   ${isPM?`<div class="tab" onclick="traceTab('pmsummary',this)">📋 Summary</div>`:''}
+   <div class="tab ${traceActiveTab==='log'?'on':''}" onclick="traceTab('log',this)">📋 Transaction Log (${log.length})</div>
+   ${isFG?`<div class="tab ${traceActiveTab==='production'?'on':''}" onclick="traceTab('production',this)">🏭 Production (${productionLog.length})</div>`:''}
+   ${isFG?`<div class="tab ${traceActiveTab==='returns'?'on':''}" onclick="traceTab('returns',this)">↩️ Returns (${returns.length})</div>`:''}
+   ${isFG?`<div class="tab ${traceActiveTab==='disasm'?'on':''}" onclick="traceTab('disasm',this)">🔧 Disassembly (${disasm.length})</div>`:''}
+   ${isPM?`<div class="tab ${traceActiveTab==='pmbom'?'on':''}" onclick="traceTab('pmbom',this)">🏭 Used in FG (${pmBom.length})</div>`:''}
+   ${isPM?`<div class="tab ${traceActiveTab==='pmconsumption'?'on':''}" onclick="traceTab('pmconsumption',this)">📊 Consumption (${pmConsumption.length}m)</div>`:''}
+   ${isPM?`<div class="tab ${traceActiveTab==='pminvoices'?'on':''}" onclick="traceTab('pminvoices',this)">🚚 Purchase Receipts (${pmInvoices.length})</div>`:''}
+   ${isPM?`<div class="tab ${traceActiveTab==='pmsummary'?'on':''}" onclick="traceTab('pmsummary',this)">📋 Summary</div>`:''}
   </div>
-  <div class="tab-pane on" id="trace-tab-log">
+  <div class="tab-pane ${traceActiveTab==='log'?'on':''}" id="trace-tab-log">
    <div class="tc">
     <div class="tb"><h3>Transaction Log</h3><input class="sr" id="traceLogS" placeholder="Search..." oninput="traceFilterLog()"><span class="cnt" id="traceLogC">${log.length} rows</span></div>
     <div class="ts" id="traceLogT" style="max-height:500px">${traceBuildTable(log)}</div>
    </div>
   </div>
   ${isFG?`
-  <div class="tab-pane" id="trace-tab-production">
+  <div class="tab-pane ${traceActiveTab==='production'?'on':''}" id="trace-tab-production">
     <div class="tc"><div class="tb"><h3>🏭 Production Receipts</h3><span class="cnt">${productionLog.length} batches · ${N(Math.round(totalProdQty))} units</span></div>
     <div class="ts" style="max-height:500px">${productionLog.length?
-     `<table><thead><tr><th>Date</th><th>Order #</th><th>Warehouse</th><th class="R">Qty Produced</th><th>Comments</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="3"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${productionLog.length} batches)</span></td><td class="R m" style="color:#059669">${N(Math.round(totalProdQty))}</td><td>–</td></tr>`+
-     productionLog.map(r=>`<tr><td class="m">${r.DocDate||'–'}</td><td class="m">${r.BaseRef||'–'}</td><td class="m">${r.WhsName||'–'}</td><td class="R m" style="color:#059669;font-weight:800">${N(r.InQty)}</td><td style="font-size:12px;color:var(--tx2)">${r.Comments||'–'}</td></tr>`).join('')+'</tbody></table>':
+     `<table><thead><tr><th style="width:30px">#</th><th>Date</th><th>Order #</th><th>Warehouse</th><th class="R">Qty Produced</th><th>Comments</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="4"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${productionLog.length} batches)</span></td><td class="R m" style="color:#059669">${N(Math.round(totalProdQty))}</td><td>–</td></tr>`+
+     productionLog.map((r,idx)=>`<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td class="m">${r.DocDate||'–'}</td><td class="m">${r.BaseRef||'–'}</td><td class="m">${r.WhsName||'–'}</td><td class="R m" style="color:#059669;font-weight:800">${N(r.InQty)}</td><td style="font-size:12px;color:var(--tx2)">${r.Comments||'–'}</td></tr>`).join('')+'</tbody></table>':
      '<div class="em">No production history found for this period</div>'}
     </div></div>
   </div>`:''}
   ${isFG?`
-  <div class="tab-pane" id="trace-tab-returns">
+  <div class="tab-pane ${traceActiveTab==='returns'?'on':''}" id="trace-tab-returns">
    <div class="tc"><div class="tb"><h3>↩️ Returns After Sale</h3><span class="cnt">${returns.length} returns · ${N(Math.round(totalRet))} units</span></div>
    <div class="ts" style="max-height:500px">${returns.length?
-    `<table><thead><tr><th>Date</th><th>Type</th><th>Customer</th><th>Warehouse</th><th class="R">Qty</th><th class="R">Value</th><th>Memo</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="4"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${returns.length} rows)</span></td><td class="R m" style="color:#dc2626">+${N(Math.round(totalRet))}</td><td class="R m">${FV(totalRetVal)}</td><td>–</td></tr>`+
-    returns.map(r=>`<tr><td class="m">${r.DocDate||'–'}</td><td><span style="padding:2px 7px;border-radius:6px;font-size:10px;font-weight:800;background:#fee2e2;color:#991b1b">${r.ReturnType}</span></td><td>${r.CardName||'–'}</td><td class="m">${r.Warehouse||'–'}</td><td class="R m" style="color:#dc2626;font-weight:800">+${N(r.ReturnQty)}</td><td class="R m">${FV(r.TransValue)}</td><td style="font-size:12px;color:var(--tx2)">${r.JrnlMemo||'–'}</td></tr>`).join('')+'</tbody></table>':
+    `<table><thead><tr><th style="width:30px">#</th><th>Date</th><th>Type</th><th>Customer</th><th>Warehouse</th><th class="R">Qty</th><th class="R">Value</th><th>Memo</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="5"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${returns.length} rows)</span></td><td class="R m" style="color:#dc2626">+${N(Math.round(totalRet))}</td><td class="R m">${FV(totalRetVal)}</td><td>–</td></tr>`+
+    returns.map((r,idx)=>`<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td class="m">${r.DocDate||'–'}</td><td><span style="padding:2px 7px;border-radius:6px;font-size:10px;font-weight:800;background:#fee2e2;color:#991b1b">${r.ReturnType}</span></td><td>${r.CardName||'–'}</td><td class="m">${r.Warehouse||'–'}</td><td class="R m" style="color:#dc2626;font-weight:800">+${N(r.ReturnQty)}</td><td class="R m">${FV(r.TransValue)}</td><td style="font-size:12px;color:var(--tx2)">${r.JrnlMemo||'–'}</td></tr>`).join('')+'</tbody></table>':
     '<div class="em">No returns found</div>'}
    </div></div>
   </div>
-  <div class="tab-pane" id="trace-tab-disasm">
+  <div class="tab-pane ${traceActiveTab==='disasm'?'on':''}" id="trace-tab-disasm">
    <div class="tc"><div class="tb"><h3>🔧 Disassembly Orders</h3><span class="cnt">${disasm.length} orders</span></div>
    <div class="ts" style="max-height:500px">${disasm.length?
-    `<table><thead><tr><th>WO#</th><th>Status</th><th>Start</th><th>Due</th><th>Close</th><th class="R">Planned</th><th class="R">Actual</th><th>Comments</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="5"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${disasm.length} orders)</span></td><td class="R m">${N(Math.round(totalDisPlanned))}</td><td class="R m" style="color:#059669">${N(Math.round(totalDisActual))}</td><td>–</td></tr>`+
-    disasm.map(r=>{const st=r.Status==='R'?'Released':r.Status==='L'?'Closed':'Planned';const sc=r.Status==='L'?'b-ok':r.Status==='R'?'b-i':'b-w';
-     return`<tr><td class="m">${r.DocNum}</td><td><span class="bd ${sc}">${st}</span></td><td class="m">${r.StartDate||'–'}</td><td class="m">${r.DueDate||'–'}</td><td class="m">${r.CloseDate||'–'}</td><td class="R m">${N(r.PlannedQty)}</td><td class="R m" style="color:#059669;font-weight:800">${N(r.ActualQty)}</td><td style="font-size:11px;color:var(--mt)">${r.Comments||'–'}</td></tr>`}).join('')+'</tbody></table>':
+    `<table><thead><tr><th style="width:30px">#</th><th>WO#</th><th>Status</th><th>Start</th><th>Due</th><th>Close</th><th class="R">Planned</th><th class="R">Actual</th><th>Comments</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="6"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${disasm.length} orders)</span></td><td class="R m">${N(Math.round(totalDisPlanned))}</td><td class="R m" style="color:#059669">${N(Math.round(totalDisActual))}</td><td>–</td></tr>`+
+    disasm.map((r,idx)=>{const st=r.Status==='R'?'Released':r.Status==='L'?'Closed':'Planned';const sc=r.Status==='L'?'b-ok':r.Status==='R'?'b-i':'b-w';
+     return`<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td class="m">${r.DocNum}</td><td><span class="bd ${sc}">${st}</span></td><td class="m">${r.StartDate||'–'}</td><td class="m">${r.DueDate||'–'}</td><td class="m">${r.CloseDate||'–'}</td><td class="R m">${N(r.PlannedQty)}</td><td class="R m" style="color:#059669;font-weight:800">${N(r.ActualQty)}</td><td style="font-size:11px;color:var(--mt)">${r.Comments||'–'}</td></tr>`}).join('')+'</tbody></table>':
     '<div class="em">No disassembly orders</div>'}
    </div></div>
   </div>`:''}
   ${isPM?`
-  <div class="tab-pane" id="trace-tab-pmbom">
+  <div class="tab-pane ${traceActiveTab==='pmbom'?'on':''}" id="trace-tab-pmbom">
    <div class="tc"><div class="tb"><h3>🏭 FG Items Using This PM</h3><span class="cnt">${pmBom.length} FG items</span></div>
    <div class="ts" style="max-height:500px">${pmBom.length?
-    `<table><thead><tr><th>FG Code</th><th>FG Name</th><th>Sub Group</th><th class="R">Qty / Unit</th><th class="R">FG On Hand</th><th class="R">FG Stock Value</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="3"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${pmBom.length} FG items)</span></td><td class="R m">–</td><td class="R m" style="color:#059669">${N(Math.round(pmBomTotalOnHand))}</td><td class="R m">${FV(pmBomTotalStockVal)}</td></tr>`+
-    pmBom.map(r=>`<tr><td class="m">${r.FGCode}</td><td><b>${r.FGName}</b></td><td><span class="bd b-w">${r.SubGroup}</span></td><td class="R m">${r.QtyPerUnit}</td><td class="R m" style="color:#059669;font-weight:800">${N(r.FGOnHand)}</td><td class="R m">${FV(r.FGStockValue)}</td></tr>`).join('')+'</tbody></table>':
+    `<table><thead><tr><th style="width:30px">#</th><th>FG Code</th><th>FG Name</th><th>Sub Group</th><th class="R">Qty / Unit</th><th class="R">FG On Hand</th><th class="R">FG Stock Value</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="4"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${pmBom.length} FG items)</span></td><td class="R m">–</td><td class="R m" style="color:#059669">${N(Math.round(pmBomTotalOnHand))}</td><td class="R m">${FV(pmBomTotalStockVal)}</td></tr>`+
+    pmBom.map((r,idx)=>`<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td class="m">${r.FGCode}</td><td><b>${r.FGName}</b></td><td><span class="bd b-w">${r.SubGroup}</span></td><td class="R m">${r.QtyPerUnit}</td><td class="R m" style="color:#059669;font-weight:800">${N(r.FGOnHand)}</td><td class="R m">${FV(r.FGStockValue)}</td></tr>`).join('')+'</tbody></table>':
     '<div class="em">This PM is not linked to any FG in BOM</div>'}
    </div></div>
   </div>
-  <div class="tab-pane" id="trace-tab-pmconsumption">
+  <div class="tab-pane ${traceActiveTab==='pmconsumption'?'on':''}" id="trace-tab-pmconsumption">
    <div class="tc"><div class="tb"><h3>📊 Monthly Consumption (Last 24 Months)</h3><span class="cnt">${pmConsumption.length} months · Total consumed: ${N(pmConsumption.reduce((s,r)=>s+(+r.ConsumedQty||0),0))} units</span></div>
    <div class="ts" style="max-height:500px">${pmConsumption.length?
-    `<table><thead><tr><th>Month</th><th class="R" style="color:#059669">Received (+)</th><th class="R" style="color:#dc2626">Consumed (−)</th><th class="R">Net Change</th><th class="R">Consumed Value</th><th class="R" title="Number of different dates movement happened this month">Active Days</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${pmConsumption.length}m)</span></td><td class="R m" style="color:#059669">${pmConsTotalRec>0?'+'+N(Math.round(pmConsTotalRec)):'–'}</td><td class="R m" style="color:#dc2626">${N(Math.round(pmConsTotalCon))}</td><td class="R m" style="color:${pmConsTotalNet>0?'#059669':pmConsTotalNet<0?'#dc2626':'var(--mt)'}">${pmConsTotalNet>0?'+':''}${N(Math.round(pmConsTotalNet))}</td><td class="R m">${FV(pmConsTotalVal)}</td><td class="R m" style="color:var(--mt)">${pmConsTotalDays} days</td></tr>`+
-    pmConsumption.map(r=>{const net=+(r.NetChange??0);const netColor=net>0?'#059669':net<0?'#dc2626':'var(--mt)';const netSign=net>0?'+':'';
-    return`<tr><td class="m"><b>${r.Month}</b></td><td class="R m" style="color:#059669;font-weight:700">${(+r.ReceivedQty||0)>0?'+'+N(r.ReceivedQty):'–'}</td><td class="R m" style="color:#dc2626;font-weight:800">${N(r.ConsumedQty)}</td><td class="R m" style="color:${netColor};font-weight:800">${netSign}${N(Math.round(net))}</td><td class="R m">${FV(r.ConsumedValue)}</td><td class="R m" style="color:var(--mt)">${r.TxnDays} days</td></tr>`}).join('')+'</tbody></table>':
+    `<table><thead><tr><th style="width:30px">#</th><th>Month</th><th class="R" style="color:#059669">Received (+)</th><th class="R" style="color:#dc2626">Consumed (−)</th><th class="R">Net Change</th><th class="R">Consumed Value</th><th class="R" title="Number of different dates movement happened this month">Active Days</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td></td><td><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${pmConsumption.length}m)</span></td><td class="R m" style="color:#059669">${pmConsTotalRec>0?'+'+N(Math.round(pmConsTotalRec)):'–'}</td><td class="R m" style="color:#dc2626">${N(Math.round(pmConsTotalCon))}</td><td class="R m" style="color:${pmConsTotalNet>0?'#059669':pmConsTotalNet<0?'#dc2626':'var(--mt)'}">${pmConsTotalNet>0?'+':''}${N(Math.round(pmConsTotalNet))}</td><td class="R m">${FV(pmConsTotalVal)}</td><td class="R m" style="color:var(--mt)">${pmConsTotalDays} days</td></tr>`+
+    pmConsumption.map((r,idx)=>{const net=+(r.NetChange??0);const netColor=net>0?'#059669':net<0?'#dc2626':'var(--mt)';const netSign=net>0?'+':'';
+    return`<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td class="m"><b>${r.Month}</b></td><td class="R m" style="color:#059669;font-weight:700">${(+r.ReceivedQty||0)>0?'+'+N(r.ReceivedQty):'–'}</td><td class="R m" style="color:#dc2626;font-weight:800">${N(r.ConsumedQty)}</td><td class="R m" style="color:${netColor};font-weight:800">${netSign}${N(Math.round(net))}</td><td class="R m">${FV(r.ConsumedValue)}</td><td class="R m" style="color:var(--mt)">${r.TxnDays} days</td></tr>`}).join('')+'</tbody></table>':
     '<div class="em">No consumption data in last 24 months</div>'}
    </div></div>
   </div>
-  <div class="tab-pane" id="trace-tab-pminvoices">
+  <div class="tab-pane ${traceActiveTab==='pminvoices'?'on':''}" id="trace-tab-pminvoices">
    <div class="tc"><div class="tb"><h3>🚚 Purchase Receipts (Goods Receipt PO)</h3><span class="cnt">${pmInvoices.length} receipts · ${FV(pmInvoices.reduce((s,r)=>s+(+r.LineTotal||0),0))}</span></div>
    <div class="ts" style="max-height:500px">${pmInvoices.length?
-    `<table><thead><tr><th>Doc#</th><th>Date</th><th>Supplier</th><th class="R">Qty</th><th class="R">Unit Price</th><th class="R">Total</th><th>Status</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="3"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${pmInvoices.length} receipts)</span></td><td class="R m" style="color:#059669">${N(Math.round(pmInvTotalQty))}</td><td class="R m">–</td><td class="R m">${FV(pmInvTotalVal)}</td><td>–</td></tr>`+
-    pmInvoices.map(r=>`<tr><td class="m">${r.DocNum}</td><td class="m">${r.DocDate||'–'}</td><td>${r.Supplier||'–'}</td><td class="R m" style="color:#059669;font-weight:800">${N(r.Qty)}</td><td class="R m">${r.UnitPrice}</td><td class="R m" style="font-weight:800">${FV(r.LineTotal)}</td><td><span class="bd ${r.Status==='Open'?'b-i':'b-ok'}">${r.Status}</span></td></tr>`).join('')+'</tbody></table>':
+    `<table><thead><tr><th style="width:30px">#</th><th>Doc#</th><th>Date</th><th>Supplier</th><th class="R">Qty</th><th class="R">Unit Price</th><th class="R">Total</th><th>Status</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="4"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${pmInvoices.length} receipts)</span></td><td class="R m" style="color:#059669">${N(Math.round(pmInvTotalQty))}</td><td class="R m">–</td><td class="R m">${FV(pmInvTotalVal)}</td><td>–</td></tr>`+
+    pmInvoices.map((r,idx)=>`<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td class="m">${r.DocNum}</td><td class="m">${r.DocDate||'–'}</td><td>${r.Supplier||'–'}</td><td class="R m" style="color:#059669;font-weight:800">${N(r.Qty)}</td><td class="R m">${r.UnitPrice}</td><td class="R m" style="font-weight:800">${FV(r.LineTotal)}</td><td><span class="bd ${r.Status==='Open'?'b-i':'b-ok'}">${r.Status}</span></td></tr>`).join('')+'</tbody></table>':
     '<div class="em">No purchase invoices found</div>'}
    </div></div>
   </div>
-  <div class="tab-pane" id="trace-tab-pmsummary">
+  <div class="tab-pane ${traceActiveTab==='pmsummary'?'on':''}" id="trace-tab-pmsummary">
    <div class="tc">
     <div class="tb"><h3>📋 PM Summary</h3></div>
     <div id="pmSummaryContent">${buildPMSummaryHTML(pmSummaryData,pmBom,summaryPeriod)}</div>
@@ -1605,9 +1701,9 @@ function traceBuildTable(rows){
   const tIn=rows.reduce((s,r)=>s+(+r.InQty||0),0);
   const tOut=rows.reduce((s,r)=>s+(+r.OutQty||0),0);
   const tVal=rows.reduce((s,r)=>s+(+r.TransValue||0),0);
-  return`<table><thead><tr><th>Date</th><th>Type</th><th>Warehouse</th><th>Journal Memo</th><th>Party/Ref</th><th class="R" style="color:#059669">In Qty</th><th class="R" style="color:#dc2626">Out Qty</th><th class="R">Value</th><th>Comments</th></tr></thead>
-  <tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="5"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${rows.length} rows)</span></td><td class="R m" style="color:#059669">+${N(Math.round(tIn))}</td><td class="R m" style="color:#dc2626">-${N(Math.round(tOut))}</td><td class="R m">${FV(tVal)}</td><td>–</td></tr>${rows.map(r=>{const tp=tType(r.TransType);const isIn=(+r.InQty||0)>0,isOut=(+r.OutQty||0)>0;const ref=[r.CardName,r.BaseRef].filter(Boolean).join(' · ')||'–';
-   return`<tr><td class="m" style="white-space:nowrap">${r.DocDate||'–'}</td>
+  return`<table><thead><tr><th style="width:30px">#</th><th>Date</th><th>Type</th><th>Warehouse</th><th>Journal Memo</th><th>Party/Ref</th><th class="R" style="color:#059669">In Qty</th><th class="R" style="color:#dc2626">Out Qty</th><th class="R">Value</th><th>Comments</th></tr></thead>
+  <tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="6"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${rows.length} rows)</span></td><td class="R m" style="color:#059669">+${N(Math.round(tIn))}</td><td class="R m" style="color:#dc2626">-${N(Math.round(tOut))}</td><td class="R m">${FV(tVal)}</td><td>–</td></tr>${rows.map((r,idx)=>{const tp=tType(r.TransType);const isIn=(+r.InQty||0)>0,isOut=(+r.OutQty||0)>0;const ref=[r.CardName,r.BaseRef].filter(Boolean).join(' · ')||'–';
+   return`<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td class="m" style="white-space:nowrap">${r.DocDate||'–'}</td>
     <td><span style="display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:800;background:${tp.bg};color:${tp.color};white-space:nowrap">${tp.icon} ${tp.label}</span></td>
     <td><div class="m">${r.Warehouse||'–'}</div><div style="font-size:11px;color:var(--mt)">${r.WhsName||''}</div></td>
     <td style="font-size:12px;color:var(--tx2);max-width:160px">${r.JrnlMemo||'–'}</td>
@@ -1617,7 +1713,7 @@ function traceBuildTable(rows){
     <td class="R m">${r.TransValue?FV(r.TransValue):'–'}</td>
     <td style="font-size:11px;color:var(--mt);max-width:130px">${r.Comments||'–'}</td></tr>`}).join('')}</tbody></table>`;
 }
-function traceTab(name,el){document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));document.querySelectorAll('.tab-pane').forEach(t=>t.classList.remove('on'));el.classList.add('on');document.getElementById('trace-tab-'+name).classList.add('on')}
+function traceTab(name,el){traceActiveTab=name;document.querySelectorAll('.tab').forEach(t=>t.classList.remove('on'));document.querySelectorAll('.tab-pane').forEach(t=>t.classList.remove('on'));el.classList.add('on');document.getElementById('trace-tab-'+name).classList.add('on')}
 function traceSetAllTypes(){traceTypeFilter=[];document.querySelectorAll('#traceRight .pl').forEach(p=>{if(p.id==='ttAll')p.classList.add('on');else p.classList.remove('on')});applyTraceFilter()}
 function traceToggleType(t,btn){
   document.getElementById('ttAll').classList.remove('on');
@@ -1657,7 +1753,7 @@ function buildPMSummaryHTML(data,bomData,period){
   const purQty=+(m.PurchaseQty||0),purVal=+(m.PurchaseValue||0);
   const conQty=+(m.ConsumptionQty||0),conVal=+(m.ConsumptionValue||0);
   const clsQty=+(c.ClosingQty||0),clsVal=+(c.ClosingValue||0);
-  const openQty=Math.round(clsQty-purQty+conQty),openVal=Math.round(clsVal-purVal+conVal);
+  const openQty=+(m.OpeningQty||0),openVal=+(m.OpeningValue||0);
   const warehouses=data.warehouses||[];
   const bilQty=+(b.BilledQty||0),bilVal=+(b.BilledValue||0);
   const bilCnt=+(b.InvoiceCount||0),supCnt=+(b.SupplierCount||0);
@@ -1670,8 +1766,8 @@ function buildPMSummaryHTML(data,bomData,period){
   const utilPct=purQty>0?Math.round(conQty/purQty*100):null;
   const grApGap=purQty-bilQty;
   const trendPct=prev3m>0?Math.round((last3m-prev3m)/prev3m*100):null;
-  const card=(bg,border,label,mainColor,mainVal,sub1,sub2)=>
-    `<div style="flex:1;min-width:130px;background:${bg};border:1.5px solid ${border};border-radius:12px;padding:13px 16px;text-align:center">
+  const card=(bg,border,label,mainColor,mainVal,sub1,sub2,onclick='')=>
+    `<div class="pm-summary-card" data-orig-border="${border}" style="flex:1;min-width:130px;background:${bg};border:1.5px solid ${border};border-radius:12px;padding:13px 16px;text-align:center${onclick?';cursor:pointer;transition:.15s':''}" ${onclick?`onclick="${onclick}" title="Click for details"`:''}>
       <div style="font-size:9px;font-weight:800;text-transform:uppercase;color:var(--mt);letter-spacing:.5px;margin-bottom:5px">${label}</div>
       <div style="font-size:22px;font-weight:800;color:${mainColor};margin-bottom:3px">${mainVal}</div>
       ${sub1?`<div style="font-size:12px;color:var(--mt);font-weight:600">${sub1}</div>`:''}
@@ -1684,17 +1780,24 @@ function buildPMSummaryHTML(data,bomData,period){
       <span style="font-size:12px;color:${color};line-height:1.5">${text}</span>
      </div>`;
   const periodLabel=period===0?'All Time':period===1?'Last 1 Month':period===3?'Last 3 Months':period===6?'Last 6 Months':'Last 12 Months';
+  const adjQty = Math.round(clsQty - (openQty + purQty - conQty));
+  const adjVal = Math.round(clsVal - (openVal + purVal - conVal));
   return`
   <div style="font-size:11px;font-weight:700;color:var(--mt);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">Stock Reconciliation — ${periodLabel}</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
    ${card('#f8fafc','#e2e8f0','Opening Stock','var(--tx)',N(openQty),FV(openVal),'')}
    ${sep('+')}
-   ${card('#f0fdf4','#bbf7d0','Purchased','#059669','+'+N(purQty),FV(purVal),'')}
+   ${card('#f0fdf4','#bbf7d0','Purchased','#059669','+'+N(purQty),FV(purVal),'','togglePMSummaryDetail(\'purchased\',this)')}
    ${sep('−')}
-   ${card('#fff1f2','#fecdd3','Consumed in Prod.','#dc2626',N(conQty),FV(conVal),'')}
+   ${card('#fff1f2','#fecdd3','Consumed in Prod.','#dc2626',N(conQty),FV(conVal),'','togglePMSummaryDetail(\'consumed\',this)')}
+   ${adjQty !== 0 ? `
+   ${sep(adjQty > 0 ? '+' : '−')}
+   ${card(adjQty > 0 ? '#eff6ff' : '#fef2f2', adjQty > 0 ? '#bfdbfe' : '#fecaca', 'Other Adj.', adjQty > 0 ? '#1d4ed8' : '#dc2626', (adjQty > 0 ? '+' : '') + N(adjQty), FV(adjVal), 'Transfers/Adj.','togglePMSummaryDetail(\'adj\',this)')}
+   ` : ''}
    ${sep('=')}
    ${card(clsQty>0?'#eff6ff':'#fef2f2',clsQty>0?'#bfdbfe':'#fecaca','Current Stock',clsQty>0?'#1d4ed8':'#dc2626',N(clsQty),FV(clsVal),coverDays!==null?`~${coverDays}d stock left`:'')}
   </div>
+  <div id="pmSummaryDetailSection" style="display:none;margin-bottom:16px"></div>
   ${warehouses.length?`<div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:10px 14px;margin-bottom:12px">
    <div style="font-size:9px;font-weight:800;text-transform:uppercase;color:var(--mt);letter-spacing:.5px;margin-bottom:8px">🏪 Warehouse-wise Stock</div>
    <div class="ts"><table><thead><tr><th>Code</th><th>Warehouse Name</th><th class="R">On Hand</th></tr></thead><tbody>
@@ -1737,6 +1840,90 @@ function buildPMSummaryHTML(data,bomData,period){
      `<b>Consumption Trend:</b> Last 3 months: <b>${N(last3m)}</b> units vs previous 3 months: <b>${N(prev3m)}</b> units — <b>${trendPct>0?'+':''}${trendPct}%</b> ${trendPct>10?'📈 rising demand — consider increasing stock':trendPct<-10?'📉 falling demand — review reorder levels':'stable demand'}.`):''}
   </div>`;
 }
+function togglePMSummaryDetail(type, el) {
+  const sec = document.getElementById('pmSummaryDetailSection');
+  if(!sec) return;
+  const wasActive = el.classList.contains('active');
+  document.querySelectorAll('.pm-summary-card').forEach(c => {
+     c.classList.remove('active');
+     c.style.borderColor = c.dataset.origBorder;
+     c.style.boxShadow = 'none';
+  });
+  if(wasActive) {
+     sec.style.display = 'none';
+     return;
+  }
+  
+  el.classList.add('active');
+  el.style.borderColor = 'var(--ac)';
+  el.style.boxShadow = '0 0 0 3px rgba(14,165,233,0.2)';
+  
+  const log = window._traceLog || [];
+  let data = [];
+  let title = '';
+  
+  if(type === 'purchased') {
+    title = 'Purchased Transactions';
+    data = log.filter(r => r.TransType === 20 || r.TransType === 67);
+  } else if (type === 'consumed') {
+    title = 'Consumed in Prod. Transactions';
+    data = log.filter(r => r.TransType === 60 || r.TransType === 202 || r.TransType === 59);
+  } else if (type === 'adj') {
+    title = 'Other Adjustments';
+    data = log.filter(r => ![20, 67, 60, 202, 59].includes(+r.TransType));
+  }
+  
+  sec.style.display = 'block';
+  if(!data.length) {
+    sec.innerHTML = `<div class="em">No detailed transactions found for ${title}</div>`;
+    return;
+  }
+  
+  const hIn = data.reduce((s,r)=>s+(+r.InQty||0),0);
+  const hOut = data.reduce((s,r)=>s+(+r.OutQty||0),0);
+  
+  sec.innerHTML = `
+  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:10px;animation:fade-in .2s">
+   <div style="font-size:10px;font-weight:800;color:var(--mt);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">${title}</div>
+   <div class="ts" style="max-height:300px">
+    <table>
+     <thead><tr>
+      <th style="width:30px">#</th>
+      <th>Date</th>
+      <th>Type</th>
+      <th>Warehouse Code</th>
+      <th>Warehouse Name</th>
+      <th>Party/Ref</th>
+      <th>Memo</th>
+      <th class="R" style="color:#059669">In Qty</th>
+      <th class="R" style="color:#dc2626">Out Qty</th>
+     </tr></thead>
+     <tbody>
+      <tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8">
+       <td colspan="7"><b>TOTAL</b></td>
+       <td class="R m" style="color:#059669">+${N(hIn)}</td>
+       <td class="R m" style="color:#dc2626">-${N(hOut)}</td>
+      </tr>
+      ${data.map((r,idx)=>{
+        const tp = typeof tType === 'function' ? tType(r.TransType) : {label: r.TransType, bg: '#f1f5f9', color: '#374151', icon: ''};
+        return `<tr>
+         <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
+         <td class="m">${r.DocDate||'–'}</td>
+         <td><span style="display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:800;background:${tp.bg};color:${tp.color};white-space:nowrap">${tp.icon} ${tp.label}</span></td>
+         <td class="m" style="color:var(--ac)">${r.Warehouse||'–'}</td>
+         <td style="font-size:11px;color:var(--mt)">${r.WhsName||'–'}</td>
+         <td style="font-size:11px;color:var(--mt)">${[r.CardName,r.BaseRef].filter(Boolean).join(' · ')||'–'}</td>
+         <td style="font-size:12px;color:var(--tx2)">${r.JrnlMemo||'–'}</td>
+         <td class="R m" style="color:${(+r.InQty||0)>0?'#059669':'var(--mt)'}">${(+r.InQty||0)>0?'+'+N(r.InQty):'–'}</td>
+         <td class="R m" style="color:${(+r.OutQty||0)>0?'#dc2626':'var(--mt)'}">${(+r.OutQty||0)>0?'-'+N(r.OutQty):'–'}</td>
+        </tr>`;
+      }).join('')}
+     </tbody>
+    </table>
+   </div>
+  </div>`;
+}
+
 async function toggleFGDetail(cardEl){
   const sec=document.getElementById('fgDetailSection');
   const arrow=document.getElementById('fgDetailArrow');
@@ -1753,6 +1940,7 @@ async function toggleFGDetail(cardEl){
 async function loadFGDetail(){
   const sec=document.getElementById('fgDetailSection');if(!sec)return;
   sec.innerHTML='<div class="ld">Loading FG breakdown...</div>';
+  window._fgSummaryLog = null; // Clear log cache
   const data=await apiObj(`/api/fg_pm_summary?item=${encodeURIComponent(window._pmSummaryCode||'')}&period=${window._pmSummaryPeriod||0}`);
   sec.innerHTML=buildFGDetailHTML(data);
 }
@@ -1768,58 +1956,217 @@ function buildFGDetailHTML(data){
   const clsColor=+(t.ClosingQty||0)>0?'#1d4ed8':'#dc2626';
   const clsBg=+(t.ClosingQty||0)>0?'#eff6ff':'#fef2f2';
   const clsBdr=+(t.ClosingQty||0)>0?'#bfdbfe':'#fecaca';
-  const tOpen=Math.round(+(t.ClosingQty||0) - +(t.ProductionQty||0) + +(t.ARInvoiceQty||0));
+  const tOpen = Math.round(+(t.ClosingQty||0) - +(t.ProductionQty||0) + +(t.ARInvoiceQty||0));
+  const adjQty = Math.round(+(t.ClosingQty||0) - (tOpen + +(t.ProductionQty||0) - +(t.ARInvoiceQty||0))); // Usually 0 if tOpen is derived
+  window._fgSummaryItems = items.map(i=>i.FGCode).join(',');
+  window._fgSummaryItemsData = items; // store full items for On Hand warehouse breakdown
   return`
   <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-bottom:10px">
    <div style="font-size:10px;font-weight:800;color:var(--mt);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">FG Stock Reconciliation — All ${items.length} SKUs</div>
-   <div style="display:flex;gap:6px;flex-wrap:wrap">
-    <div style="flex:1;min-width:110px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 14px;text-align:center"><div style="font-size:9px;font-weight:800;text-transform:uppercase;color:var(--mt);letter-spacing:.5px;margin-bottom:4px">Opening Stock</div><div style="font-size:19px;font-weight:800;color:var(--tx)">${N(tOpen)}</div></div>
-    <div style="flex:1;min-width:110px;background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:10px;padding:10px 14px;text-align:center"><div style="font-size:9px;font-weight:800;text-transform:uppercase;color:var(--mt);letter-spacing:.5px;margin-bottom:4px">Production</div><div style="font-size:19px;font-weight:800;color:#059669">${N(+(t.ProductionQty||0) - +(t.GRQty||0))}</div></div>
-    ${kc('#fff1f2','#fecdd3','Total OUT (Sales+Issues)','#dc2626','ARInvoiceQty')}
-    ${kc(clsBg,clsBdr,'On Hand',clsColor,'ClosingQty')}
+   <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+    <div class="fg-summary-card" data-orig-border="#e2e8f0" onclick="toggleFGSummaryDetail('opening', this)" style="flex:1;min-width:110px;background:#f8fafc;border:1.5px solid #e2e8f0;border-radius:10px;padding:10px 14px;text-align:center;cursor:pointer"><div style="font-size:9px;font-weight:800;text-transform:uppercase;color:var(--mt);letter-spacing:.5px;margin-bottom:4px">Opening Stock</div><div style="font-size:19px;font-weight:800;color:var(--tx)">${N(tOpen)}</div></div>
+    ${sp('+')}
+    <div class="fg-summary-card" data-orig-border="#bbf7d0" onclick="toggleFGSummaryDetail('production', this)" style="flex:1;min-width:110px;background:#f0fdf4;border:1.5px solid #bbf7d0;border-radius:10px;padding:10px 14px;text-align:center;cursor:pointer"><div style="font-size:9px;font-weight:800;text-transform:uppercase;color:var(--mt);letter-spacing:.5px;margin-bottom:4px">Production</div><div style="font-size:19px;font-weight:800;color:#059669">${N(+(t.ProductionQty||0))}</div></div>
+    ${sp('−')}
+    <div class="fg-summary-card" data-orig-border="#fecdd3" onclick="toggleFGSummaryDetail('totalout', this)" style="flex:1;min-width:110px;background:#fff1f2;border:1.5px solid #fecdd3;border-radius:10px;padding:10px 14px;text-align:center;cursor:pointer"><div style="font-size:9px;font-weight:800;text-transform:uppercase;color:var(--mt);letter-spacing:.5px;margin-bottom:4px">Total OUT</div><div style="font-size:19px;font-weight:800;color:#dc2626">${N(+(t.ARInvoiceQty||0))}</div></div>
+    ${sp('−')}
+    <div class="fg-summary-card" data-orig-border="#fecaca" onclick="toggleFGSummaryDetail('adj', this)" style="flex:1;min-width:110px;background:#fef2f2;border:1.5px solid #fecaca;border-radius:10px;padding:10px 14px;text-align:center;cursor:pointer"><div style="font-size:9px;font-weight:800;text-transform:uppercase;color:var(--mt);letter-spacing:.5px;margin-bottom:4px">Other Adj.</div><div style="font-size:19px;font-weight:800;color:#dc2626">0</div></div>
+    ${sp('=')}
+    <div class="fg-summary-card" data-orig-border="${clsBdr}" onclick="toggleFGSummaryDetail('onhand', this)" style="flex:1;min-width:110px;background:${clsBg};border:1.5px solid ${clsBdr};border-radius:10px;padding:10px 14px;text-align:center;cursor:pointer"><div style="font-size:9px;font-weight:800;text-transform:uppercase;color:var(--mt);letter-spacing:.5px;margin-bottom:4px">On Hand</div><div style="font-size:19px;font-weight:800;color:${clsColor}">${N(+(t.ClosingQty||0))}</div></div>
    </div>
+   <div id="fgSummaryDetailSection" style="display:none;margin-top:10px"></div>
   </div>
   <div class="ts" style="max-height:300px">
    <table><thead><tr>
+    <th style="width:30px">#</th>
     <th>FG Code</th><th>FG Name</th><th>Sub Group</th><th class="R">Qty/Unit</th>
     <th class="R">Opening</th>
-    <th class="R" style="color:#059669">Total IN</th>
     <th class="R" style="color:#15803d">Production (101)</th>
     <th class="R" style="color:#dc2626">Total OUT</th>
-    <th class="R" style="color:#b91c1c">A/R Invoice (13)</th>
     <th class="R" style="color:#1d4ed8">On Hand</th>
     <th class="R">Value</th>
     <th>Warehouses</th>
    </tr></thead><tbody>
    <tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8">
-    <td colspan="4"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${items.length} FG SKUs)</span></td>
+    <td colspan="5"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${items.length} FG SKUs)</span></td>
     <td class="R m">${N(tOpen)}</td>
-    <td class="R m" style="color:#059669">${N(+(t.ProductionQty||0))}</td>
     <td class="R m" style="color:#15803d">${N(+(t.ProdSpecQty||0))}</td>
     <td class="R m" style="color:#dc2626">${N(+(t.ARInvoiceQty||0))}</td>
-    <td class="R m" style="color:#b91c1c">${N(+(t.ARSpecQty||0))}</td>
     <td class="R m" style="color:#1d4ed8;font-weight:800">${N(+(t.ClosingQty||0))}</td>
     <td class="R m">${FV(+(t.ClosingValue||0))}</td>
     <td></td>
    </tr>
-   ${items.map(r=>{
+   ${items.map((r,idx)=>{
     const rOpen=Math.round(+(r.ClosingQty||0) - +(r.ProductionQty||0) + +(r.ARInvoiceQty||0));
     const whs=(r.Warehouses||[]).map(w=>`<span class="bd b-w" style="margin:1px 2px;display:inline-block">${w.WhsCode}: ${N(+(w.OnHand||0))}</span>`).join('');
     return`<tr>
+    <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
     <td class="m">${r.FGCode}</td>
     <td><b>${r.FGName}</b></td>
     <td><span class="bd b-w">${r.SubGroup}</span></td>
     <td class="R m" style="color:var(--mt)">${r.QtyPerUnit}</td>
     <td class="R m">${N(rOpen)}</td>
-    <td class="R m" style="color:#059669;font-weight:700">${N(+(r.ProductionQty||0))}</td>
     <td class="R m" style="color:#15803d;font-weight:700">${N(+(r.ProdSpecQty||0))}</td>
     <td class="R m" style="color:#dc2626;font-weight:700">${N(+(r.ARInvoiceQty||0))}</td>
-    <td class="R m" style="color:#b91c1c;font-weight:700">${N(+(r.ARSpecQty||0))}</td>
     <td class="R m" style="color:#1d4ed8;font-weight:800">${N(+(r.ClosingQty||0))}</td>
     <td class="R m">${FV(+(r.ClosingValue||0))}</td>
     <td style="font-size:11px;white-space:normal">${whs||'–'}</td>
    </tr>`}).join('')}
    </tbody></table>
+  </div>`;
+}
+
+async function toggleFGSummaryDetail(type, el) {
+  const sec = document.getElementById('fgSummaryDetailSection');
+  if(!sec) return;
+  const wasActive = el.classList.contains('active');
+  document.querySelectorAll('.fg-summary-card').forEach(c => {
+     c.classList.remove('active');
+     c.style.borderColor = c.dataset.origBorder;
+     c.style.boxShadow = 'none';
+  });
+  if(wasActive) {
+     sec.style.display = 'none';
+     return;
+  }
+  
+  el.classList.add('active');
+  el.style.borderColor = 'var(--ac)';
+  el.style.boxShadow = '0 0 0 3px rgba(14,165,233,0.2)';
+  
+  if(!window._fgSummaryLog) {
+      sec.style.display = 'block';
+      sec.innerHTML = '<div class="ld" style="padding:15px">Loading transaction details for all FGs...</div>';
+      const period = window._pmSummaryPeriod || 0;
+      const days = period > 0 ? period * 30 : 365; 
+      const rawItems = (window._fgSummaryItems||'').replace(/%2C/gi,',');
+      let logUrl = `/api/trace_log?item=${encodeURIComponent(rawItems)}&days=${days}`;
+      if(window._traceMonth) logUrl = `/api/trace_log?item=${encodeURIComponent(rawItems)}&month=${window._traceMonth}`;
+      window._fgSummaryLog = await api(logUrl);
+  }
+  
+  const log = window._fgSummaryLog || [];
+  let data = [];
+  let title = '';
+  
+  if(type === 'production') {
+    title = 'Production Transactions (Receipt from Production)';
+    data = log.filter(r => [59, 101, 202].includes(r.TransType) && (+r.InQty > 0));
+  } else if (type === 'totalout') {
+    title = 'Total OUT Transactions (Sales & Deliveries)';
+    data = log.filter(r => r.TransType !== 67 && (+r.OutQty > 0));
+  } else if (type === 'adj') {
+    title = 'Other Adjustments / Transfers';
+    data = log.filter(r => {
+      const isProd = [59, 101, 202].includes(r.TransType) && (+r.InQty > 0);
+      const isOut = r.TransType !== 67 && (+r.OutQty > 0);
+      return !isProd && !isOut;
+    });
+  } else if (type === 'onhand') {
+    const allItems = window._fgSummaryItemsData || [];
+    let whsMap = {};
+    allItems.forEach(item => {
+      (item.Warehouses||[]).forEach(w => {
+        if(!whsMap[w.WhsCode]) whsMap[w.WhsCode] = {WhsCode:w.WhsCode, WhsName:w.WhsName, OnHand:0, items:[]};
+        whsMap[w.WhsCode].OnHand += (+w.OnHand||0);
+        if(+w.OnHand > 0) whsMap[w.WhsCode].items.push({code:item.FGCode, name:item.FGName, qty:+w.OnHand});
+      });
+    });
+    const rows = Object.values(whsMap).filter(w=>w.OnHand>0).sort((a,b)=>b.OnHand-a.OnHand);
+    const total = rows.reduce((s,w)=>s+w.OnHand,0);
+    sec.style.display = 'block';
+    if(!rows.length) { sec.innerHTML = '<div class="em">No warehouse data available</div>'; return; }
+    sec.innerHTML = `
+    <div style="background:#f8fafc;border:1px solid #bfdbfe;border-radius:10px;padding:12px 14px;margin-top:10px;animation:fade-in .2s">
+     <div style="font-size:10px;font-weight:800;color:var(--mt);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">On Hand — Warehouse Breakdown</div>
+     <div class="ts" style="max-height:320px">
+      <table>
+       <thead><tr><th>#</th><th>Warehouse Code</th><th>Warehouse Name</th><th class="R">Total On Hand</th><th class="R">% Share</th></tr></thead>
+       <tbody>
+        <tr style="background:#dbeafe;font-weight:800;border-bottom:2px solid #93c5fd">
+         <td colspan="3"><b>TOTAL (all warehouses)</b></td>
+         <td class="R m" style="color:#1d4ed8">${N(total)}</td>
+         <td class="R m">100%</td>
+        </tr>
+        ${rows.map((w,idx)=>`<tr>
+         <td class="m" style="color:var(--mt)">${idx+1}</td>
+         <td class="m" style="color:var(--ac);font-weight:700">${w.WhsCode}</td>
+         <td style="font-size:11px">${w.WhsName}</td>
+         <td class="R m" style="color:#1d4ed8;font-weight:700">${N(w.OnHand)}</td>
+         <td class="R m" style="color:var(--mt)">${(w.OnHand/total*100).toFixed(1)}%</td>
+        </tr>`).join('')}
+       </tbody>
+      </table>
+     </div>
+    </div>`;
+    return;
+  } else if (type === 'opening') {
+    sec.style.display = 'block';
+    sec.innerHTML = `<div class="em" style="padding:15px;background:#f8fafc;border-radius:10px;border:1.5px solid #e2e8f0;margin-top:10px;animation:fade-in .2s">
+      <div style="font-size:10px;font-weight:800;color:var(--mt);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">Opening Stock Information</div>
+      <div style="font-size:13px;color:var(--tx2);line-height:1.6">
+        Opening stock is the calculated inventory balance at the start of the selected period. 
+        It represents all previous stock movements (In - Out) that occurred before the period started.
+      </div>
+    </div>`;
+    return;
+  } else {
+    sec.style.display = 'none';
+    return;
+  }
+  
+  sec.style.display = 'block';
+  if(!data.length) {
+    sec.innerHTML = `<div class="em">No detailed transactions found for ${title}</div>`;
+    return;
+  }
+  
+  const hIn = data.reduce((s,r)=>s+(+r.InQty||0),0);
+  const hOut = data.reduce((s,r)=>s+(+r.OutQty||0),0);
+  
+  sec.innerHTML = `
+  <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:10px;padding:12px 14px;margin-top:10px;animation:fade-in .2s">
+   <div style="font-size:10px;font-weight:800;color:var(--mt);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px">${title}</div>
+   <div class="ts" style="max-height:300px">
+    <table>
+     <thead><tr>
+      <th style="width:30px">#</th>
+      <th>Date</th>
+      <th>Type</th>
+      <th>Item Code</th>
+      <th>Item Name</th>
+      <th>Warehouse Code</th>
+      <th>Warehouse Name</th>
+      <th>Party/Ref</th>
+      <th>Memo</th>
+      <th class="R" style="color:#059669">In Qty</th>
+      <th class="R" style="color:#dc2626">Out Qty</th>
+     </tr></thead>
+     <tbody>
+      <tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8">
+       <td colspan="9"><b>TOTAL</b></td>
+       <td class="R m" style="color:#059669">+${N(hIn)}</td>
+       <td class="R m" style="color:#dc2626">-${N(hOut)}</td>
+      </tr>
+      ${data.map((r,idx)=>{
+        const tp = typeof tType === 'function' ? tType(r.TransType) : {label: r.TransType, bg: '#f1f5f9', color: '#374151', icon: ''};
+        return `<tr>
+         <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
+         <td class="m">${r.DocDate||'–'}</td>
+         <td><span style="display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:800;background:${tp.bg};color:${tp.color};white-space:nowrap">${tp.icon} ${tp.label}</span></td>
+         <td class="m" style="color:var(--ac)">${r.ItemCode||'–'}</td>
+         <td style="font-size:11px;color:var(--mt)">${r.ItemName||'–'}</td>
+         <td class="m" style="color:var(--ac)">${r.Warehouse||'–'}</td>
+         <td style="font-size:11px;color:var(--mt)">${r.WhsName||'–'}</td>
+         <td style="font-size:11px;color:var(--mt)">${[r.CardName,r.BaseRef].filter(Boolean).join(' · ')||'–'}</td>
+         <td style="font-size:12px;color:var(--tx2)">${r.JrnlMemo||'–'}</td>
+         <td class="R m" style="color:${(+r.InQty||0)>0?'#059669':'var(--mt)'}">${(+r.InQty||0)>0?'+'+N(r.InQty):'–'}</td>
+         <td class="R m" style="color:${(+r.OutQty||0)>0?'#dc2626':'var(--mt)'}">${(+r.OutQty||0)>0?'-'+N(r.OutQty):'–'}</td>
+        </tr>`;
+      }).join('')}
+     </tbody>
+    </table>
+   </div>
   </div>`;
 }
 
@@ -1862,11 +2209,12 @@ function rPlan(){
   const plTotSugOrder=d.reduce((s,r)=>s+(+r.SuggestedOrder||0),0);
   const plTotStockVal=d.reduce((s,r)=>s+(+r.StockValue||0),0);
   document.getElementById('plT').innerHTML=`<table><thead><tr>
+   <th style="width:30px">#</th>
    <th>Alert</th><th>Type</th><th>Item Code</th><th>Item Name</th><th>Sub-Group</th>
    <th class="R">On Hand</th><th class="R">Avg Daily Out</th><th class="R">Days Left</th>
    <th class="R">Suggested Order</th><th>Trend</th><th class="R">Stock Value</th>
-  </tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="5"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td class="R m">${N(Math.round(plTotOnHand))}</td><td class="R m">–</td><td class="R m">–</td><td class="R m" style="color:#4f46e5">${N(Math.round(plTotSugOrder))}</td><td>–</td><td class="R m">${FV(plTotStockVal)}</td></tr>`+
-  d.map(r=>{
+  </tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="6"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td class="R m">${N(Math.round(plTotOnHand))}</td><td class="R m">–</td><td class="R m">–</td><td class="R m" style="color:#4f46e5">${N(Math.round(plTotSugOrder))}</td><td>–</td><td class="R m">${FV(plTotStockVal)}</td></tr>`+
+  d.map((r,idx)=>{
     const dsl=r.DaysOfStockLeft;
     let alertBadge='';
     if(dsl>=0&&dsl<7)alertBadge='<span class="alert-red">🔴 Critical</span>';
@@ -1874,6 +2222,7 @@ function rPlan(){
     else alertBadge='<span class="alert-green">✅ OK</span>';
     const dslDisplay=dsl===-1?'<span style="color:var(--mt)">∞</span>':`<span style="color:${dsl<7?'#dc2626':dsl<30?'#d97706':'#059669'};font-weight:800">${N(dsl)}d</span>`;
     return`<tr>
+     <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
      <td>${alertBadge}</td><td>${typBadge(r.ItemType)}</td>
      <td class="m">${r.ItemCode||''}</td><td>${r.ItemName||''}</td>
      <td style="font-size:12px;color:var(--mt)">${r.SubGroup||'–'}</td>
@@ -1931,13 +2280,17 @@ async function sC(){
 }
 
 // ── INIT ──
+switchDivision(DIVISION,true);
 load();
 
 // ── ADMIN AUTH ──
 const ADMIN_USER='admin',ADMIN_PASS='jivoadmin';
 function initAuth(){
-  if(sessionStorage.getItem('adminAuth')==='true'){document.body.classList.remove('locked');}
-  else{document.body.classList.add('locked');}
+  // Auto-unlock: internal tool, no auth required
+  sessionStorage.setItem('adminAuth','true');
+  document.body.classList.remove('locked');
+  document.getElementById('lockBtn').textContent='🔓';
+  document.getElementById('lockBtn').title='Values visible · Click to lock';
 }
 function showLoginModal(){if(!document.body.classList.contains('locked'))return;document.getElementById('loginModal').classList.add('sh');}
 function closeLoginModal(){document.getElementById('loginModal').classList.remove('sh');document.getElementById('loginErr').textContent='';}

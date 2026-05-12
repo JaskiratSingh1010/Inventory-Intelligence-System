@@ -7,9 +7,8 @@
   <title>Jivo Beverages — Inventory Control</title>
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;500;600;700;800;900&display=swap"
     rel="stylesheet">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-  <script
-    src="https://cdnjs.cloudflare.com/ajax/libs/chartjs-plugin-datalabels/2.2.0/chartjs-plugin-datalabels.min.js"></script>
+  <script src="/static/js/chart.umd.min.js"></script>
+  <script src="/static/js/chartjs-plugin-datalabels.min.js"></script>
   <style>
     :root {
       --bg: #f4f5f7;
@@ -1437,6 +1436,12 @@
     .whs-clear{padding:6px 12px;font-size:11px;font-weight:700;color:var(--ac);cursor:pointer;border-top:1.5px solid var(--bd);text-align:center;background:#f8fafc}
     .whs-clear:hover{background:#e0f2fe}
 
+    .schema-badge{margin:8px 8px 0;padding:8px 10px;border-radius:10px;background:rgba(0,0,0,.15);border:1px solid rgba(255,255,255,.05);white-space:nowrap}
+    .schema-badge label{font-size:9px;font-weight:800;color:rgba(255,255,255,.4);text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:5px}
+    .schema-btns{display:flex;gap:3px}
+    .schema-btn{flex:1;padding:4px 0;font-size:10px;font-weight:700;border:1.5px solid rgba(255,255,255,.05);border-radius:7px;cursor:pointer;background:transparent;color:rgba(255,255,255,.4);font-family:var(--font);transition:.15s;text-align:center}
+    .schema-btn.on{background:var(--ac);border-color:var(--ac);color:#fff;box-shadow: 0 2px 8px rgba(14,165,233,0.4);}
+
     /* ── INVENTORY VALUE BLUR (AUTH) ── */
     .inv-val-wrap{display:inline-block;position:relative;cursor:default}
     .inv-lock{display:none;position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);font-size:13px;pointer-events:none}
@@ -1851,6 +1856,14 @@
       </div>
     </div>
   </div>
+  <div class="mo" id="kpiModal" style="display:none;">
+    <div class="md" style="max-width:600px;">
+      <div class="md-h">
+        <h3 id="kpiModalTitle">Movement KPI Details</h3><button class="md-x" onclick="closeKPIPopup()">✕</button>
+      </div>
+      <div class="md-b" id="kpiModalBody"></div>
+    </div>
+  </div>
   <button class="cf" onclick="tc()">🤖</button>
   <div class="cp" id="cP">
     <div class="cp-h"><span>AI Assistant</span><button class="cp-x" onclick="tc()">✕</button></div>
@@ -1864,18 +1877,20 @@
   </div>
 
   <script>
-    Chart.register(ChartDataLabels);
-    Chart.defaults.set('plugins.datalabels', { display: false });
-    Chart.defaults.font.family = 'Nunito'; Chart.defaults.font.weight = 600; Chart.defaults.font.size = 13;
+    try {
+      Chart.register(ChartDataLabels);
+      Chart.defaults.set('plugins.datalabels', { display: false });
+      Chart.defaults.font.family = 'Nunito'; Chart.defaults.font.weight = 600; Chart.defaults.font.size = 13;
+    } catch (e) { console.warn('Chart init failed (Chart.js may not be loaded):', e); }
 
     // ── STATE ──
-    let S = 'dash', C = '', ch = {}, DIVISION = 'beverages';
+    let S = 'dash', C = '', ch = {}, DIVISION = 'beverages', SCH = 'jivo_oil';
     let moDays = 30, moStatusF = 'all', moSGData = [], moItemCache = {}, moDateFrom = '', moDateTo = '';
     let biDays = 30, biSGData = [], biItemCache = {}, biCustomFrom = '', biCustomTo = '', biCustomApplied = false;
     let abComboF = 'all', abSGData = [], abItemCache = {};
     let plD = [], plAlertF = 'all';
     let whAllData = [], whItemCache = {};
-    let traceCategory = 'FINISHED', traceSG = null, traceAllItems = [], traceCode = '', traceName = '', traceDays = 0, traceMonth = '', traceTypeFilter = [];
+    let traceCategory = 'FINISHED', traceSG = null, traceAllItems = [], traceCode = '', traceName = '', traceDays = 0, traceMonth = '', traceTypeFilter = [], traceActiveTab = 'log';
     let mvD_data = [], mvDays = 30, mvCustomFrom = '', mvCustomTo = '', mvCustomApplied = false;
     let mvWhsSel = new Set(), moWhsSel = new Set(), biWhsSel = new Set(), agWhsSel = new Set(), whOwnerSel = new Set(), whWhsSel = new Set();
     function toggleWhsDrop(menuId, btn) { const m = document.getElementById(menuId); const isOpen = m.classList.contains('open'); document.querySelectorAll('.whs-menu.open').forEach(x => x.classList.remove('open')); if (!isOpen) { if (m.parentNode !== document.body) document.body.appendChild(m); const r = btn.getBoundingClientRect(); m.style.top = (r.bottom + 4) + 'px'; m.style.left = r.left + 'px'; m.style.minWidth = Math.max(280, r.width) + 'px'; m.classList.add('open') } }
@@ -1941,15 +1956,69 @@
     function moBadge(s) { const m = { 'NON-MOVING': 'b-d', 'SLOW': 'b-w', 'MEDIUM': 'b-i', 'FAST': 'b-ok' }; return `<span class="bd ${m[s] || 'b-i'}">${s}</span>` }
     function trendBadge(t) { if (!t) return ''; const m = { RISING: 'trend-r', FALLING: 'trend-f', STABLE: 'trend-s', FLAT: 'trend-flat' }; const i = { RISING: '↑', FALLING: '↓', STABLE: '→', FLAT: '—' }; return `<span class="${m[t] || 'trend-flat'}">${i[t] || ''} ${t}</span>` }
 
-    function api(u) { return fetch('/' + DIVISION + u).then(r => r.json()).then(d => d.data || []).catch(() => []) }
-    function apiObj(u) { return fetch('/' + DIVISION + u).then(r => r.json()).catch(() => null) }
+    async function api(u) {
+      const uSchema = u + (u.includes('?') ? '&' : '?') + 'schema=' + SCH;
+      const sep = uSchema.includes('?') ? '&' : '?';
+      const url1 = '/' + DIVISION + uSchema + sep + '_t=' + Date.now();
+      const url2 = uSchema + sep + '_t=' + Date.now();
+      try {
+        let r = await fetch(url1, { cache: 'no-store' });
+        if (!r.ok) r = await fetch(url2, { cache: 'no-store' });
+        const d = await r.json();
+        return d.data || [];
+      } catch (e) { return [] }
+    }
+    async function apiObj(u) {
+      const uSchema = u + (u.includes('?') ? '&' : '?') + 'schema=' + SCH;
+      const sep = uSchema.includes('?') ? '&' : '?';
+      const url1 = '/' + DIVISION + uSchema + sep + '_t=' + Date.now();
+      const url2 = uSchema + sep + '_t=' + Date.now();
+      try {
+        let r = await fetch(url1, { cache: 'no-store' });
+        if (!r.ok) r = await fetch(url2, { cache: 'no-store' });
+        return await r.json();
+      } catch (e) { return null }
+    }
     function dc(i) { if (ch[i]) { ch[i].destroy(); delete ch[i] } }
     function mc(i, c) { dc(i); const x = document.getElementById(i); if (!x) return; ch[i] = new Chart(x.getContext('2d'), c) }
     function oM(t) { document.getElementById('mT').textContent = t; document.getElementById('modal').classList.add('sh') }
     function xM() { document.getElementById('modal').classList.remove('sh') }
+    function showKPIPopup(status, count, value, totalValue) {
+      const statusIcons = { 'NON-MOVING': '🔒', 'SLOW': '🐌', 'MEDIUM': '⚡', 'FAST': '🚀' };
+      const statusColors = { 'NON-MOVING': '#dc2626', 'SLOW': '#d97706', 'MEDIUM': '#059669', 'FAST': '#10b981' };
+      const statusLabels = { 'NON-MOVING': 'Non-Moving Items', 'SLOW': 'Slow Moving Items', 'MEDIUM': 'Medium Moving Items', 'FAST': 'Fast Moving Items' };
+      const percentage = ((parseFloat(value) / parseFloat(totalValue)) * 100).toFixed(1);
+
+      document.getElementById('kpiModalTitle').textContent = `📊 ${statusLabels[status]} Details`;
+      document.getElementById('kpiModalBody').innerHTML = `
+    <div style="padding:16px;">
+      <div style="background:#fefce8;border:1px solid #fde047;border-radius:8px;padding:12px;margin-bottom:12px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div style="font-size:24px;">${statusIcons[status]}</div>
+          <div>
+            <div style="font-size:16px;font-weight:800;color:${statusColors[status]};">${N(count)}</div>
+            <div style="font-size:12px;color:#713f12;">${FsV(value)} value</div>
+            <div style="font-size:11px;color:#6b7280;">${percentage}% of total inventory value</div>
+          </div>
+        </div>
+      </div>
+      <div style="font-size:13px;line-height:1.6;color:var(--tx2);">
+        ${status === 'NON-MOVING' ? 'These items have had zero sales or movement in the selected period, representing stagnant capital that should be reviewed for potential clearance or promotion.' : ''}
+        ${status === 'SLOW' ? 'These items have very low movement velocity and may require inventory optimization or marketing focus.' : ''}
+        ${status === 'MEDIUM' ? 'These items have moderate movement and represent stable inventory turnover.' : ''}
+        ${status === 'FAST' ? 'These items have high movement velocity and are key contributors to sales.' : ''}
+      </div>
+    </div>
+  `;
+      document.getElementById('kpiModal').style.display = 'block';
+    }
+    function closeKPIPopup() {
+      document.getElementById('kpiModal').style.display = 'none';
+    }
     function toggleSide() { const s = document.getElementById('sidebar'), btn = document.querySelector('.side-toggle'); s.classList.toggle('collapsed'); btn.textContent = s.classList.contains('collapsed') ? '☰' : '✕' }
-    function switchDivision(div) {
-      if (div === DIVISION) return;
+    function setSchema(s, btn) { SCH = s; document.querySelectorAll('.schema-btn').forEach(b => b.classList.remove('on')); btn.classList.add('on'); moItemCache = {}; biItemCache = {}; abItemCache = {}; whItemCache = {}; moItemCache = {}; load() }
+    function switchDivision(div, force = false) {
+      if (!force && div === DIVISION) return;
       DIVISION = div;
       const logo = document.getElementById('divLogo');
       const title = document.getElementById('divTitle');
@@ -1985,7 +2054,7 @@
     });
     document.querySelectorAll('#cpls .pl').forEach(p => p.onclick = () => {
       document.querySelectorAll('#cpls .pl').forEach(x => x.classList.remove('on')); p.classList.add('on'); C = p.dataset.c;
-      moItemCache = {}; biItemCache = {}; abItemCache = {}; whItemCache = {}; load()
+      moItemCache = {}; moRawCache = {}; biItemCache = {}; abItemCache = {}; whItemCache = {}; load()
     });
     function pg(id, cb) { document.querySelectorAll(`#${id} .pl`).forEach(p => p.onclick = () => { document.querySelectorAll(`#${id} .pl`).forEach(x => x.classList.remove('on')); p.classList.add('on'); cb(p.dataset.v) }) }
     function load() { ({ dash: lD, stock: lWHStock, move: lMV, movers: lMO, billing: lBI, abc: lABCXYZ, aging: lAG, trace: lTrace, planning: lPlan })[S]?.() }
@@ -1994,10 +2063,14 @@
     async function lD() {
       initMultiWhs('mvWhsMenu', 'mvWhsLabel', mvWhsSel, rMV);
       initMultiWhs('moWhsMenu', 'moWhsLabel', moWhsSel, () => { moItemCache = {}; lMO() });
-      const k = (await api('/api/kpi' + (C ? '?category=' + encodeURIComponent(C) : '')))[0] || {};
-      const cat = await api('/api/categories' + (C ? '?category=' + encodeURIComponent(C) : ''));
-      const ms = await api('/api/movers_summary?days=30' + (C ? '&category=' + encodeURIComponent(C) : ''));
-      const bi = await api('/api/not_billed_summary');
+      document.getElementById('dK').innerHTML = '<div style="padding:18px 0;color:var(--mt);font-weight:700;font-size:13px">⏳ Loading dashboard data from SAP HANA...</div>';
+      const [kArr, cat, ms, bi] = await Promise.all([
+        api('/api/kpi' + (C ? '?category=' + encodeURIComponent(C) : '')),
+        api('/api/categories' + (C ? '?category=' + encodeURIComponent(C) : '')),
+        api('/api/movers_summary?days=30' + (C ? '&category=' + encodeURIComponent(C) : '')),
+        api('/api/not_billed_summary')
+      ]);
+      const k = kArr[0] || {};
       const nm = ms.find(x => x.Status === 'NON-MOVING') || { Count: 0, Value: 0 };
       const b30 = bi.find(x => x.Period === '30 Days') || { NotBilledSKUs: 0, NotBilledValue: 0 };
       document.getElementById('dK').innerHTML = `<div class="kg">
@@ -2054,9 +2127,9 @@
       const d = await api('/api/out_of_stock' + (C ? '?category=' + encodeURIComponent(C) : ''));
       if(!d.length){document.getElementById('mB').innerHTML='<div class="em">No out of stock items</div>';return}
       const oosTotOnHand=d.reduce((s,r)=>s+(+r.TotalOnHand||0),0);
-      document.getElementById('mB').innerHTML=`<table><thead><tr><th>Category</th><th>Item Code</th><th>Item Name</th><th class="R">On Hand</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="3"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td class="R m">${N(Math.round(oosTotOnHand))}</td></tr>`+d.map(r=>`<tr><td>${r.Category}</td><td class="m">${r.ItemCode}</td><td>${r.ItemName}</td><td class="R m">${N(r.TotalOnHand)}</td></tr>`).join('')+'</tbody></table>';
+      document.getElementById('mB').innerHTML=`<table><thead><tr><th style="width:30px">#</th><th>Category</th><th>Item Code</th><th>Item Name</th><th class="R">On Hand</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="4"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td class="R m">${N(Math.round(oosTotOnHand))}</td></tr>`+d.map((r,idx)=>`<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td>${r.Category}</td><td class="m">${r.ItemCode}</td><td>${r.ItemName}</td><td class="R m">${N(r.TotalOnHand)}</td></tr>`).join('')+'</tbody></table>';
     }
-    function mkT(d){const mkTotOnHand=d.reduce((s,r)=>s+(+r.OnHand||0),0);const mkTotOnOrder=d.reduce((s,r)=>s+(+r.OnOrder||0),0);const mkTotAvail=d.reduce((s,r)=>s+(+r.Available||0),0);const mkTotVal=d.reduce((s,r)=>s+(+r.StockValue||0),0);return`<table><thead><tr><th>Category</th><th>Item Code</th><th>Item Name</th><th>WH</th><th>Owner</th><th class="R">On Hand</th><th class="R">On Order</th><th class="R">Available</th><th class="R">Value</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="5"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td class="R m">${N(Math.round(mkTotOnHand))}</td><td class="R m">${N(Math.round(mkTotOnOrder))}</td><td class="R m" style="color:${mkTotAvail<0?'#dc2626':'#059669'}">${N(Math.round(mkTotAvail))}</td><td class="R m">${FV(mkTotVal)}</td></tr>`+d.map(r=>`<tr><td>${r.Category||''}</td><td class="m">${r.ItemCode}</td><td>${r.ItemName}</td><td class="m">${r.WhsCode}</td><td>${r.OwnerName||'–'}</td><td class="R m">${N(r.OnHand)}</td><td class="R m">${N(r.OnOrder)}</td><td class="R m">${N(r.Available)}</td><td class="R m">${FV(r.StockValue)}</td></tr>`).join('')+'</tbody></table>'}
+    function mkT(d){const mkTotOnHand=d.reduce((s,r)=>s+(+r.OnHand||0),0);const mkTotOnOrder=d.reduce((s,r)=>s+(+r.OnOrder||0),0);const mkTotAvail=d.reduce((s,r)=>s+(+r.Available||0),0);const mkTotVal=d.reduce((s,r)=>s+(+r.StockValue||0),0);return`<table><thead><tr><th style="width:30px">#</th><th>Category</th><th>Item Code</th><th>Item Name</th><th>WH</th><th>Owner</th><th class="R">On Hand</th><th class="R">On Order</th><th class="R">Available</th><th class="R">Value</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="6"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td class="R m">${N(Math.round(mkTotOnHand))}</td><td class="R m">${N(Math.round(mkTotOnOrder))}</td><td class="R m" style="color:${mkTotAvail<0?'#dc2626':'#059669'}">${N(Math.round(mkTotAvail))}</td><td class="R m">${FV(mkTotVal)}</td></tr>`+d.map((r,idx)=>`<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td>${r.Category||''}</td><td class="m">${r.ItemCode}</td><td>${r.ItemName}</td><td class="m">${r.WhsCode}</td><td>${r.OwnerName||'–'}</td><td class="R m">${N(r.OnHand)}</td><td class="R m">${N(r.OnOrder)}</td><td class="R m">${N(r.Available)}</td><td class="R m">${FV(r.StockValue)}</td></tr>`).join('')+'</tbody></table>'}
 
     // ════ MERGED WAREHOUSE + STOCK ════
     async function lWHStock() {
@@ -2084,15 +2157,16 @@
       const wrap = document.getElementById('whT');
       if (!data.length) { wrap.innerHTML = '<div class="em">No warehouses found</div>'; return }
       let html = `<table class="wh-table"><thead><tr>
-   <th style="width:20px"></th>
-   <th>Warehouse Code</th><th>Warehouse Name</th><th>Owner</th>
-   <th class="R">SKUs</th><th class="R">Qty</th><th class="R">On Order</th>
-   <th class="R">Value</th>
-  </tr></thead><tbody>`;
+    <th style="width:20px"></th><th style="width:30px">#</th>
+    <th>Warehouse Code</th><th>Warehouse Name</th><th>Owner</th>
+    <th class="R">SKUs</th><th class="R">Qty</th><th class="R">On Order</th>
+    <th class="R">Value</th>
+   </tr></thead><tbody>`;
       data.forEach((v, idx) => {
         const vid = `wh-${v.WhsCode.replace(/[^a-z0-9]/gi, '_')}`;
         html += `<tr class="wh-row" onclick="whToggle('${v.WhsCode}','${vid}',this)">
      <td><span class="wh-chevron">›</span></td>
+     <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
      <td><span class="m" style="color:var(--ac)">${v.WhsCode}</span></td>
      <td style="font-weight:700">${v.WhsName || '–'}</td>
      <td style="font-size:12px;color:var(--tx2)">${v.OwnerName || '–'}</td>
@@ -2101,7 +2175,7 @@
      <td class="R m" style="color:#4f46e5">${N(v.OnOrder)}</td>
      <td class="R m" style="font-weight:800;color:#059669">${FV(v.Value)}</td>
     </tr>
-    <tr class="wh-items-row" id="${vid}-items"><td colspan="8">
+    <tr class="wh-items-row" id="${vid}-items"><td colspan="9">
      <div class="wh-items-inner" id="${vid}-inner"><div class="ld" style="padding:10px">Loading items...</div></div>
     </td></tr>`;
       });
@@ -2129,11 +2203,12 @@
     ${d.length} items in ${whsCode}
    </div>
    <table><thead><tr>
-    <th>Category</th><th>Item Code</th><th>Item Name</th><th>Sub-Group</th><th>Type</th>
+    <th style="width:30px">#</th><th>Category</th><th>Item Code</th><th>Item Name</th><th>Sub-Group</th><th>Type</th>
     <th class="R">On Hand</th><th class="R">On Order</th>
     <th class="R">Available</th><th class="R">Value</th>
-   </tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="5"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td class="R m">${N(Math.round(whsTotOnHand))}</td><td class="R m" style="color:#4f46e5">${N(Math.round(whsTotOnOrder))}</td><td class="R m" style="color:${whsTotAvail<0?'#dc2626':'#059669'}">${N(Math.round(whsTotAvail))}</td><td class="R m">${FV(whsTotVal)}</td></tr>`+
-        d.map(r => `<tr>
+   </tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="6"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td class="R m">${N(Math.round(whsTotOnHand))}</td><td class="R m" style="color:#4f46e5">${N(Math.round(whsTotOnOrder))}</td><td class="R m" style="color:${whsTotAvail<0?'#dc2626':'#059669'}">${N(Math.round(whsTotAvail))}</td><td class="R m">${FV(whsTotVal)}</td></tr>`+
+        d.map((r,idx) => `<tr>
+    <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
     <td><span class="bd b-i" style="font-size:9px">${r.Category || '–'}</span></td>
     <td class="m" style="color:var(--ac)">${r.ItemCode}</td>
     <td>${r.ItemName || ''}</td>
@@ -2187,8 +2262,9 @@
       const mvTotInVal=d.reduce((s,r)=>s+(+r.InValue||0),0);
       const mvTotOutVal=d.reduce((s,r)=>s+(+r.OutValue||0),0);
       document.getElementById('mvT').innerHTML = d.length ?
-        `<table><thead><tr><th>Date</th><th>WH Code</th><th>Warehouse</th><th>Category</th><th>Sub-Group</th><th>Item Code</th><th>Item Name</th><th class="R">In Qty</th><th class="R">Out Qty</th><th class="R">In Value</th><th class="R">Out Value</th><th class="R">Net</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="7"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} rows)</span></td><td class="R m">${N(Math.round(mvTotInQty))}</td><td class="R m">${N(Math.round(mvTotOutQty))}</td><td class="R m">${FV(mvTotInVal)}</td><td class="R m">${FV(mvTotOutVal)}</td><td class="R m" style="color:${mvTotInVal-mvTotOutVal>=0?'#059669':'#ef4444'}">${FV(mvTotInVal-mvTotOutVal)}</td></tr>` +
-        d.map(r => `<tr>
+        `<table><thead><tr><th style="width:30px">#</th><th>Date</th><th>WH Code</th><th>Warehouse</th><th>Category</th><th>Sub-Group</th><th>Item Code</th><th>Item Name</th><th class="R">In Qty</th><th class="R">Out Qty</th><th class="R">In Value</th><th class="R">Out Value</th><th class="R">Net</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="8"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} rows)</span></td><td class="R m">${N(Math.round(mvTotInQty))}</td><td class="R m">${N(Math.round(mvTotOutQty))}</td><td class="R m">${FV(mvTotInVal)}</td><td class="R m">${FV(mvTotOutVal)}</td><td class="R m" style="color:${mvTotInVal-mvTotOutVal>=0?'#059669':'#ef4444'}">${FV(mvTotInVal-mvTotOutVal)}</td></tr>` +
+        d.map((r,idx) => `<tr>
+    <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
     <td class="m">${r.Date || ''}</td>
     <td class="m" style="color:var(--ac)">${r.WhsCode || ''}</td>
     <td style="font-size:12px;color:var(--tx2)">${r.WhsName || ''}</td>
@@ -2212,22 +2288,27 @@
       const sum = await api(`/api/movers_summary?days=${moDays}` + (C ? '&category=' + encodeURIComponent(C) : '') + whsP);
       const g = s => sum.find(x => x.Status === s) || { Count: 0, Value: 0 };
       const nm = g('NON-MOVING'), sl = g('SLOW'), md = g('MEDIUM'), fa = g('FAST');
+      const totalItems = sum.reduce((acc, s) => acc + s.Count, 0);
+      const totalValue = sum.reduce((acc, s) => acc + s.Value, 0);
       document.getElementById('moK').innerHTML = `<div class="kg">
-   <div class="kc k3"><div class="kc-l">Non-Moving (${moDays}d)</div><div class="kc-v">${N(nm.Count)}</div><div class="kc-s">${FsV(nm.Value)} stuck</div><div class="kc-bg">🔒</div></div>
-   <div class="kc k4"><div class="kc-l">Slow</div><div class="kc-v">${N(sl.Count)}</div><div class="kc-s">${FsV(sl.Value)}</div><div class="kc-bg">🐌</div></div>
-   <div class="kc k1"><div class="kc-l">Medium</div><div class="kc-v">${N(md.Count)}</div><div class="kc-s">${FsV(md.Value)}</div><div class="kc-bg">⚡</div></div>
-   <div class="kc k2"><div class="kc-l">Fast</div><div class="kc-v">${N(fa.Count)}</div><div class="kc-s">${FsV(fa.Value)}</div><div class="kc-bg">🚀</div></div>
-  </div>`;
+        <div class="kc k3" onclick="showKPIPopup('NON-MOVING', '${nm.Count}', '${nm.Value}', '${totalValue}')" title="Items that have had zero sales or movement in last ${moDays} days. Represents stagnant capital."><div class="kc-l">Non-Moving (${moDays}d)</div><div class="kc-v">${N(nm.Count)}</div><div class="kc-s">${FsV(nm.Value)} stuck</div><div class="kc-bg">🔒</div></div>
+        <div class="kc k4" onclick="showKPIPopup('SLOW', '${sl.Count}', '${sl.Value}', '${totalValue}')" title="Items with very slow movement in last ${moDays} days."><div class="kc-l">Slow</div><div class="kc-v">${N(sl.Count)}</div><div class="kc-s">${FsV(sl.Value)}</div><div class="kc-bg">🐌</div></div>
+        <div class="kc k1" onclick="showKPIPopup('MEDIUM', '${md.Count}', '${md.Value}', '${totalValue}')" title="Items with moderate movement in last ${moDays} days."><div class="kc-l">Medium</div><div class="kc-v">${N(md.Count)}</div><div class="kc-s">${FsV(md.Value)}</div><div class="kc-bg">⚡</div></div>
+        <div class="kc k2" onclick="showKPIPopup('FAST', '${fa.Count}', '${fa.Value}', '${totalValue}')" title="Items with fast movement in last ${moDays} days."><div class="kc-l">Fast</div><div class="kc-v">${N(fa.Count)}</div><div class="kc-s">${FsV(fa.Value)}</div><div class="kc-bg">🚀</div></div>
+        <div class="kc k5" style="background:linear-gradient(135deg,#dc2626,#ef4444);cursor:default;" title="Total items and value across all movement categories."><div class="kc-l">Total Items</div><div class="kc-v">${N(totalItems)}</div><div class="kc-s">${FsV(totalValue)} total value</div><div class="kc-bg">📊</div></div>
+      </div>`;
       const nt = document.getElementById('moN');
-      if (nm.Count > 0) { nt.style.display = ''; nt.innerHTML = `<b>⚠ ${N(nm.Count)} items</b> — ZERO movement in ${moDays} days — <b>${FV(nm.Value)}</b> stuck.` } else { nt.style.display = 'none' }
+      if (nm.Count > 0) { nt.style.display = ''; nt.innerHTML = '<b>⚠ ' + N(nm.Count) + ' items</b> — ZERO movement in ' + moDays + ' days — <b>' + FV(nm.Value) + '</b> stuck.'; } else { nt.style.display = 'none'; }
       await lMOSGs();
     }
     async function lMOSGs() {
-      const cat = C || 'FINISHED';
+      const catP = C ? '&category=' + encodeURIComponent(C) : '';
       const t = '';
-      const moDtP = moDateFrom && moDateTo ? `&date_from=${moDateFrom}&date_to=${moDateTo}` : '';
-      const whsP = moWhsSel.size > 0 ? `&whs=${[...moWhsSel].join(',')}` : '';
-      moSGData = await api(`/api/movers_by_subgroup?days=${moDays}&category=${encodeURIComponent(cat)}${moDtP}${whsP}`);
+      const moDtP = moDateFrom && moDateTo ? '&date_from=' + moDateFrom + '&date_to=' + moDateTo : '';
+      const whsP = moWhsSel.size > 0 ? '&whs=' + [...moWhsSel].join(',') : '';
+      moSGData = await api('/api/movers_by_subgroup?days=' + moDays + moDtP + whsP + catP);
+      const catOrder = {'FINISHED':1, 'RAW MATERIAL':2, 'PACKAGING MATERIAL':3};
+      moSGData.sort((a,b) => (catOrder[a.Category] || 9) - (catOrder[b.Category] || 9) || (b.StuckValue - a.StuckValue));
       moItemCache = {}; renderMoTable();
     }
     function renderMoTable() {
@@ -2242,30 +2323,60 @@
         }
       });
 
-      let h = `<table class="cat-table"><thead><tr>
-   <th style="width:24px"></th>
-   <th>Sub-Group</th>
-   <th class="R">Total SKUs</th><th class="R" style="color:#ef4444">Non-Moving</th>
-   <th class="R" style="color:#f59e0b">Slow</th><th class="R" style="color:#0ea5e9">Medium</th>
-   <th class="R" style="color:#10b981">Fast</th>
-   <th class="R">Stock Value</th><th class="R" style="color:#dc2626">Stuck Value</th>
-  </tr></thead><tbody>`;
-      moSGData.forEach((v, idx) => {
+      let h = '<table class="cat-table"><thead><tr>';
+    h += '<th style="width:24px"></th><th style="width:30px">#</th>';
+    h += '<th>Sub-Group</th>';
+      h += '<th style="color:var(--mt);font-weight:700">Category</th>';
+    h += '<th class="R">Total SKUs</th><th class="R" style="color:#ef4444">Non-Moving</th>';
+    h += '<th class="R" style="color:#f59e0b">Slow</th><th class="R" style="color:#0ea5e9">Medium</th>';
+    h += '<th class="R" style="color:#10b981">Fast</th>';
+    h += '<th class="R">Stock Value</th><th class="R" style="color:#dc2626">Stuck Value</th>';
+    h += '</tr></thead><tbody>';
+    
+    // Calculate totals first
+    console.log('Beverages moSGData:', moSGData); // Debug: Check data structure
+    const totalSKUs = moSGData.reduce((s, v) => s + (v.TotalSKUs || 0), 0);
+    const totalNonMoving = moSGData.reduce((s, v) => s + (v.NonMovingSKUs || 0), 0);
+    const totalSlow = moSGData.reduce((s, v) => s + (v.SlowSKUs || 0), 0);
+    const totalMedium = moSGData.reduce((s, v) => s + (v.MediumSKUs || 0), 0);
+    const totalFast = moSGData.reduce((s, v) => s + (v.FastSKUs || 0), 0);
+    const totalStockValue = moSGData.reduce((s, v) => s + (v.StockValue || 0), 0);
+    const totalStuckValue = moSGData.reduce((s, v) => s + (v.StuckValue || 0), 0);
+    
+    console.log('Beverages Totals:', {totalSKUs, totalNonMoving, totalSlow, totalMedium, totalFast, totalStockValue, totalStuckValue}); // Debug: Check totals
+    
+    // Add total row at the top
+    h += '<tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8">';
+    h += '<td colspan="4"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(' + moSGData.length + ' groups)</span></td>';
+    h += '<td class="R m">' + N(totalSKUs) + '</td>';
+    h += '<td class="R m" style="color:#ef4444">' + N(totalNonMoving) + '</td>';
+    h += '<td class="R m" style="color:#f59e0b">' + N(totalSlow) + '</td>';
+    h += '<td class="R m" style="color:#0ea5e9">' + N(totalMedium) + '</td>';
+    h += '<td class="R m" style="color:#10b981">' + N(totalFast) + '</td>';
+    h += '<td class="R m">' + FsV(totalStockValue) + '</td>';
+    h += '<td class="R m" style="color:' + (totalStuckValue > 0 ? '#dc2626' : 'var(--mt)') + '">';
+    h += totalStuckValue > 0 ? FsV(totalStuckValue) : '–';
+    h += '</td>';
+    h += '</tr>';
+    
+    moSGData.forEach((v, idx) => {
         const sgSafe = v.SubGroup.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
-        h += `<tr class="cat-row" onclick="moToggleSG('${sgSafe}',${idx},this)">
-     <td><span class="cat-chevron">›</span></td>
-     <td style="font-weight:700">${v.SubGroup}</td>
-     <td class="R m">${N(v.TotalSKUs)}</td>
-     <td class="R m" style="color:#ef4444">${N(v.NonMovingSKUs)}</td>
-     <td class="R m" style="color:#f59e0b">${N(v.SlowSKUs)}</td>
-     <td class="R m" style="color:#0ea5e9">${N(v.MediumSKUs)}</td>
-     <td class="R m" style="color:#10b981">${N(v.FastSKUs)}</td>
-     <td class="R m">${FsV(v.StockValue)}</td>
-     <td class="R m" style="color:${v.StuckValue > 0 ? '#dc2626' : 'var(--mt)'}">
-      ${v.StuckValue > 0 ? FsV(v.StuckValue) : '–'}
-     </td>
-    </tr>
-    <tr class="cat-items-row" id="mo-items-${idx}"><td colspan="9"><div class="cat-items-inner" id="mo-inner-${idx}"><div class="ld" style="padding:12px">Loading...</div></div></td></tr>`;
+        h += '<tr class="cat-row" onclick="moToggleSG(\'' + sgSafe + '\',' + idx + ',this)">';
+        h += '<td><span class="cat-chevron">›</span></td>';
+        h += '<td class="m" style="color:var(--mt);width:30px">' + (idx + 1) + '</td>';
+        h += '<td style="font-weight:700">' + v.SubGroup + '</td>';
+          h += '<td style="font-size:11px;color:var(--mt);font-weight:600">' + (v.Category || '') + '</td>';
+        h += '<td class="R m">' + N(v.TotalSKUs) + '</td>';
+        h += '<td class="R m" style="color:#ef4444">' + N(v.NonMovingSKUs) + '</td>';
+        h += '<td class="R m" style="color:#f59e0b">' + N(v.SlowSKUs) + '</td>';
+        h += '<td class="R m" style="color:#0ea5e9">' + N(v.MediumSKUs) + '</td>';
+        h += '<td class="R m" style="color:#10b981">' + N(v.FastSKUs) + '</td>';
+        h += '<td class="R m">' + FsV(v.StockValue) + '</td>';
+        h += '<td class="R m" style="color:' + (v.StuckValue > 0 ? '#dc2626' : 'var(--mt)') + '">';
+        h += v.StuckValue > 0 ? FsV(v.StuckValue) : '–';
+        h += '</td>';
+        h += '</tr>';
+        h += '<tr class="cat-items-row" id="mo-items-' + idx + '"><td colspan="11"><div class="cat-items-inner" id="mo-inner-' + idx + '"><div class="ld" style="padding:12px">Loading...</div></div></td></tr>';
       });
       h += '</tbody></table>';
       wrap.innerHTML = h;
@@ -2275,7 +2386,7 @@
           const rows = document.querySelectorAll('#moTableWrap .cat-row');
           rows.forEach(row => {
             const onclickAttr = row.getAttribute('onclick');
-            if (onclickAttr && onclickAttr.includes(`moToggleSG('${openRows[0]}'`)) {
+            if (onclickAttr && onclickAttr.includes('moToggleSG(\'' + openRows[0] + '\')')) {
               row.click();
             }
           });
@@ -2283,8 +2394,8 @@
       }
     }
     async function moToggleSG(sg, idx, row) {
-      const itemRow = document.getElementById(`mo-items-${idx}`);
-      const inner = document.getElementById(`mo-inner-${idx}`);
+      const itemRow = document.getElementById('mo-items-' + idx);
+      const inner = document.getElementById('mo-inner-' + idx);
       const isOpen = row.classList.contains('open');
       document.querySelectorAll('#moTableWrap .cat-row').forEach(r => r.classList.remove('open'));
       document.querySelectorAll('#moTableWrap .cat-items-row').forEach(r => r.classList.remove('open'));
@@ -2294,10 +2405,11 @@
       const cacheKey = sg + '|' + (moStatusF || 'all') + '|' + (typeof moDateFrom !== 'undefined' ? moDateFrom : '');
       if (moItemCache[cacheKey]) { inner.innerHTML = moItemCache[cacheKey]; return }
       const cat = C || 'FINISHED';
-      const dateP = (typeof moDateFrom !== 'undefined' && moDateFrom && moDateTo) ? `&date_from=${moDateFrom}&date_to=${moDateTo}` : '';
-      const statusP = (moStatusF && moStatusF !== 'all') ? `&status=${encodeURIComponent(moStatusF)}` : '';
-      const whsP = moWhsSel.size > 0 ? `&whs=${[...moWhsSel].join(',')}` : '';
-      const d = await api(`/api/movers?days=${moDays}&category=${encodeURIComponent(cat)}&subgroup=${encodeURIComponent(sg)}${dateP}${statusP}${whsP}`);
+      const dateP = (typeof moDateFrom !== 'undefined' && moDateFrom && moDateTo) ? '&date_from=' + moDateFrom + '&date_to=' + moDateTo : '';
+      const statusP = (moStatusF && moStatusF !== 'all') ? '&status=' + encodeURIComponent(moStatusF) : '';
+      const whsP = moWhsSel.size > 0 ? '&whs=' + [...moWhsSel].join(',') : '';
+      const t = (typeof moType !== 'undefined' && moType !== 'all') ? '&item_type=' + moType : '';
+        const d = await api('/api/movers?days=' + moDays + (C ? '&category=' + encodeURIComponent(C) : '') + '&subgroup=' + encodeURIComponent(sg) + dateP + statusP + whsP + t);
       const html = buildMoItemsHtml(d);
       moItemCache[cacheKey] = html;
       inner.innerHTML = html;
@@ -2307,9 +2419,9 @@
       const moItemTotStock=d.reduce((s,r)=>s+(+r.TotalOnHand||0),0);
       const moItemTotOut=d.reduce((s,r)=>s+(+(r['Out'+moDays+'d'])||0),0);
       const moItemTotVal=d.reduce((s,r)=>s+(+r.StockValue||0),0);
-      const totRow=`<tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="4"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td>–</td><td class="R m">${N(Math.round(moItemTotStock))}</td><td class="R m">${N(Math.round(moItemTotOut))}</td><td class="R m">${FV(moItemTotVal)}</td><td colspan="3">–</td></tr>`;
-      return '<table><thead><tr><th>Status</th><th>Sub-Group</th><th>Item Code</th><th>Item Name</th><th>WH Code</th><th class="R">Stock</th><th class="R">' + moDays + 'd Out</th><th class="R">Value</th><th class="R">Days Left</th><th>Last Move</th><th>Action</th></tr></thead><tbody>' + totRow +
-        d.map(function (r) {
+      var totRow = '<tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="5"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(' + d.length + ' items)</span></td><td>–</td><td class="R m">' + N(Math.round(moItemTotStock)) + '</td><td class="R m">' + N(Math.round(moItemTotOut)) + '</td><td class="R m">' + FV(moItemTotVal) + '</td><td colspan="3">–</td></tr>';
+      return '<table><thead><tr><th style="width:30px">#</th><th>Status</th><th>Sub-Group</th><th>Item Code</th><th>Item Name</th><th>WH Code</th><th class="R">Stock</th><th class="R">' + moDays + 'd Out</th><th class="R">Value</th><th class="R">Days Left</th><th>Last Move</th><th>Action</th></tr></thead><tbody>' + totRow +
+        d.map(function (r,idx) {
           var nm = r.ItemName || '';
           var code = r.ItemCode || '';
           var safeName = nm.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
@@ -2317,6 +2429,7 @@
           var dsl = r.DaysOfStockLeft < 0 ? '∞' : N(r.DaysOfStockLeft);
           var outKey = 'Out' + moDays + 'd';
           return '<tr>' +
+            '<td class="m" style="color:var(--mt);width:30px">' + (idx+1) + '</td>' +
             '<td>' + moBadge(r.MovementStatus) + '</td>' +
             '<td style="font-size:12px;color:var(--mt)">' + (r.SubGroup || '–') + '</td>' +
             '<td class="m">' + code + '</td>' +
@@ -2352,18 +2465,18 @@
       pg('biP', v => { biDays = +v; biCustomFrom = ''; biCustomTo = ''; biItemCache = {}; lBI() });
       await initMultiWhs('biWhsMenu', 'biWhsLabel', biWhsSel, () => { biItemCache = {}; lBISGs() });
       const sum = await api('/api/not_billed_summary');
-      document.getElementById('biK').innerHTML = `<div class="kg">` + sum.map((s, i) => `<div class="kc k${i === 0 ? 3 : i === 1 ? 4 : 1}" title="${s.NotBilledSKUs} unique finished goods worth ${F(s.NotBilledValue)} have not been billed for ${s.Period}."><div class="kc-l">FG Not Billed · ${s.Period}</div><div class="kc-v">${N(s.NotBilledSKUs)}</div><div class="kc-s">${FsV(s.NotBilledValue)}</div><div class="kc-bg">🧾</div></div>`).join('') + '</div>';
+      document.getElementById('biK').innerHTML = '<div class="kg">' + sum.map((s, i) => '<div class="kc k' + (i === 0 ? 3 : i === 1 ? 4 : 1) + '" title="' + s.NotBilledSKUs + ' unique finished goods worth ' + F(s.NotBilledValue) + ' have not been billed for ' + s.Period + '."><div class="kc-l">FG Not Billed · ' + s.Period + '</div><div class="kc-v">' + N(s.NotBilledSKUs) + '</div><div class="kc-s">' + FsV(s.NotBilledValue) + '</div><div class="kc-bg">🧾</div></div>').join('') + '</div>';
       const c = sum.find(s => s.Period === biDays + ' Days') || {};
       const nt = document.getElementById('biN');
-      if (c.NotBilledSKUs > 0) { nt.style.display = ''; nt.innerHTML = `<b>⚠ ${N(c.NotBilledSKUs)} finished goods</b> worth <b>${FV(c.NotBilledValue)}</b> — not invoiced in ${biDays} days <i style="font-size:11px">(items created &lt;30d excluded)</i>` } else { nt.style.display = 'none' }
+      if (c.NotBilledSKUs > 0) { nt.style.display = ''; nt.innerHTML = '<b>⚠ ' + N(c.NotBilledSKUs) + ' finished goods</b> worth <b>' + FV(c.NotBilledValue) + '</b> — not invoiced in ' + biDays + ' days <i style="font-size:11px">(items created &lt;30d excluded)</i>'; } else { nt.style.display = 'none'; }
       await lBISGs();
     }
     function biApplyCustomDate() { biCustomFrom = document.getElementById('biDateFrom').value; biCustomTo = document.getElementById('biDateTo').value; if (biCustomFrom && biCustomTo) { biItemCache = {}; lBISGs() } }
     function biClearCustomDate() { biCustomFrom = ''; biCustomTo = ''; document.getElementById('biDateFrom').value = ''; document.getElementById('biDateTo').value = ''; biItemCache = {}; lBISGs() }
     async function lBISGs() {
-      const biDtP = biCustomFrom && biCustomTo ? `&date_from=${biCustomFrom}&date_to=${biCustomTo}` : '';
-      const biWhsP = biWhsSel.size > 0 ? `&whs=${[...biWhsSel].join(',')}` : '';
-      biSGData = await api(`/api/not_billed_by_subgroup?days=${biDays}${biDtP}${biWhsP}`);
+      const biDtP = biCustomFrom && biCustomTo ? '&date_from=' + biCustomFrom + '&date_to=' + biCustomTo : '';
+      const biWhsP = biWhsSel.size > 0 ? '&whs=' + [...biWhsSel].join(',') : '';
+      biSGData = await api('/api/not_billed_by_subgroup?days=' + biDays + biDtP + biWhsP);
       biItemCache = {}; renderBiTable();
     }
     function renderBiTable() {
@@ -2373,25 +2486,26 @@
       const biTotNotBilled=biSGData.reduce((s,v)=>s+(+v.NotBilledSKUs||0),0);
       const biTotVal=biSGData.reduce((s,v)=>s+(+v.TotalValue||0),0);
       const biTotUnbilledVal=biSGData.reduce((s,v)=>s+(+v.NotBilledValue||0),0);
-      let html = `<table class="cat-table"><thead><tr><th style="width:24px"></th><th>Sub-Group</th><th class="R">Total SKUs</th><th class="R" style="color:#ef4444">Not Billed</th><th class="R">Total Value</th><th class="R" style="color:#dc2626">Unbilled Value</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td>–</td><td><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${biSGData.length} groups)</span></td><td class="R m">${N(biTotSKUs)}</td><td class="R m" style="color:#ef4444">${N(biTotNotBilled)}</td><td class="R m">${FsV(biTotVal)}</td><td class="R m" style="color:#dc2626">${FsV(biTotUnbilledVal)}</td></tr>`;
+      let html = '<table class="cat-table"><thead><tr><th style="width:24px"></th><th style="width:30px">#</th><th>Sub-Group</th><th class="R">Total SKUs</th><th class="R" style="color:#ef4444">Not Billed</th><th class="R">Total Value</th><th class="R" style="color:#dc2626">Unbilled Value</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td>–</td><td colspan="2"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(' + biSGData.length + ' groups)</span></td><td class="R m">' + N(biTotSKUs) + '</td><td class="R m" style="color:#ef4444">' + N(biTotNotBilled) + '</td><td class="R m">' + FsV(biTotVal) + '</td><td class="R m" style="color:#dc2626">' + FsV(biTotUnbilledVal) + '</td></tr>';
       biSGData.forEach((v, idx) => {
-        html += `<tr class="cat-row" onclick="biToggleSG('${v.SubGroup.replace(/'/g, "\\'")}',${idx},this)">
-     <td><span class="cat-chevron">›</span></td>
-     <td style="font-weight:700">${v.SubGroup}</td>
-     <td class="R m">${N(v.TotalSKUs)}</td>
-     <td class="R m" style="color:#ef4444">${N(v.NotBilledSKUs)}</td>
-     <td class="R m">${FsV(v.TotalValue)}</td>
-     <td class="R m" style="color:#dc2626">${FsV(v.NotBilledValue)}</td>
-    </tr>
-    <tr class="cat-items-row" id="bi-items-${idx}"><td colspan="6"><div class="cat-items-inner" id="bi-inner-${idx}"><div class="ld" style="padding:12px">Loading...</div></div></td></tr>`;
+        html += '<tr class="cat-row" onclick="biToggleSG(\'' + v.SubGroup.replace(/'/g, "\\'") + '\',' + idx + ',this)">';
+        html += '<td><span class="cat-chevron">›</span></td>';
+        html += '<td class="m" style="color:var(--mt);width:30px">' + (idx + 1) + '</td>';
+        html += '<td style="font-weight:700">' + v.SubGroup + '</td>';
+        html += '<td class="R m">' + N(v.TotalSKUs) + '</td>';
+        html += '<td class="R m" style="color:#ef4444">' + N(v.NotBilledSKUs) + '</td>';
+        html += '<td class="R m">' + FsV(v.TotalValue) + '</td>';
+        html += '<td class="R m" style="color:#dc2626">' + FsV(v.NotBilledValue) + '</td>';
+        html += '</tr>';
+        html += '<tr class="cat-items-row" id="bi-items-' + idx + '"><td colspan="6"><div class="cat-items-inner" id="bi-inner-' + idx + '"><div class="ld" style="padding:12px">Loading...</div></div></td></tr>';
       });
       html += '</tbody></table>';
       wrap.innerHTML = html;
       document.getElementById('biC').textContent = biSGData.reduce((s, v) => s + v.NotBilledSKUs, 0) + ' unbilled';
     }
     async function biToggleSG(sg, idx, row) {
-      const itemRow = document.getElementById(`bi-items-${idx}`);
-      const inner = document.getElementById(`bi-inner-${idx}`);
+      const itemRow = document.getElementById('bi-items-' + idx);
+      const inner = document.getElementById('bi-inner-' + idx);
       const isOpen = row.classList.contains('open');
       document.querySelectorAll('#biTableWrap .cat-row').forEach(r => r.classList.remove('open'));
       document.querySelectorAll('#biTableWrap .cat-items-row').forEach(r => r.classList.remove('open'));
@@ -2399,13 +2513,15 @@
       row.classList.add('open'); itemRow.classList.add('open');
       if (biItemCache[sg]) { inner.innerHTML = biItemCache[sg]; return }
       const t = '';
-      const dateP = biCustomFrom && biCustomTo ? `&date_from=${biCustomFrom}&date_to=${biCustomTo}` : '';
-      const biWhsP = biWhsSel.size > 0 ? `&whs=${[...biWhsSel].join(',')}` : '';
-      const d = await api(`/api/not_billed?days=${biDays}&subgroup=${encodeURIComponent(sg)}${dateP}${biWhsP}`);
+      const dateP = biCustomFrom && biCustomTo ? '&date_from=' + biCustomFrom + '&date_to=' + biCustomTo : '';
+      const biWhsP = biWhsSel.size > 0 ? '&whs=' + [...biWhsSel].join(',') : '';
+      const d = await api('/api/not_billed?days=' + biDays + '&subgroup=' + encodeURIComponent(sg) + dateP + biWhsP);
       const biItemTotStock=d.reduce((s,r)=>s+(+r.CurrentStock||0),0);
       const biItemTotVal=d.reduce((s,r)=>s+(+r.StockValue||0),0);
-      const html = d.length ? `<table><thead><tr><th>Type</th><th>Item Code</th><th>Item Name</th><th>WH Code</th><th class="R">Stock</th><th class="R">Value</th><th>Last Bill Date</th><th>Days Since Billed</th><th>Customer</th><th></th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="3"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td>–</td><td class="R m">${N(Math.round(biItemTotStock))}</td><td class="R m">${FV(biItemTotVal)}</td><td colspan="4">–</td></tr>` +
-        d.map(r => `<tr><td>${typBadge(r.ItemType)}</td><td class="m">${r.ItemCode}</td><td>${r.ItemName || ''}</td><td class="m" style="color:var(--ac);font-size:11px">${r.WhsCodes||'–'}</td><td class="R m">${N(r.CurrentStock)}</td><td class="R m">${FV(r.StockValue)}</td><td class="m">${r.LastBillDate || '<span style="color:#dc2626">Never</span>'}</td><td class="m">${r.LastBilledAgo || '–'}</td><td>${r.LastCustomer || '–'}</td><td><button class="trace-btn" onclick="goToTrace(this.dataset.code,this.dataset.name)" data-code="${r.ItemCode}" data-name="${r.ItemName || ''}">🔍 Trace</button></td></tr>`).join('') + '</tbody></table>' : '<div class="em" style="padding:12px">All billed ✓</div>';
+      var html = d.length ? '<table><thead><tr><th style="width:30px">#</th><th>Type</th><th>Item Code</th><th>Item Name</th><th>WH Code</th><th class="R">Stock</th><th class="R">Value</th><th>Last Bill Date</th><th>Days Since Billed</th><th>Customer</th><th></th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="4"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(' + d.length + ' items)</span></td><td>–</td><td class="R m">' + N(Math.round(biItemTotStock)) + '</td><td class="R m">' + FV(biItemTotVal) + '</td><td colspan="4">–</td></tr>' +
+        d.map(function(r,idx) {
+          return '<tr><td class="m" style="color:var(--mt);width:30px">' + (idx + 1) + '</td><td>' + typBadge(r.ItemType) + '</td><td class="m">' + r.ItemCode + '</td><td>' + (r.ItemName || '') + '</td><td class="m" style="color:var(--ac);font-size:11px">' + (r.WhsCodes || '–') + '</td><td class="R m">' + N(r.CurrentStock) + '</td><td class="R m">' + FV(r.StockValue) + '</td><td class="m">' + (r.LastBillDate || '<span style="color:#dc2626">Never</span>') + '</td><td class="m">' + (r.LastBilledAgo || '–') + '</td><td>' + (r.LastCustomer || '–') + '</td><td><button class="trace-btn" onclick="goToTrace(this.dataset.code,this.dataset.name)" data-code="' + r.ItemCode + '" data-name="' + (r.ItemName || '') + '">🔍 Trace</button></td></tr>';
+        }).join('') + '</tbody></table>' : '<div class="em" style="padding:12px">All billed ✓</div>';
       biItemCache[sg] = html; inner.innerHTML = html;
     }
     function biSearchItems() { }
@@ -2418,12 +2534,12 @@
 
       const sum = await api('/api/abcxyz_summary');
       const sm = {}; sum.forEach(r => { sm[r.ABCXYZClass] = { skus: r.SKUs || 0, value: r.Value || 0 } });
-      ['AX', 'AZ', 'BX', 'CX', 'CZ'].forEach(c => { const d = sm[c] || { skus: 0, value: 0 }; document.getElementById(`k${c}-s`).textContent = `${N(d.skus)} SKUs`; document.getElementById(`k${c}-v`).textContent = F(d.value) });
+      ['AX', 'AZ', 'BX', 'CX', 'CZ'].forEach(c => { const d = sm[c] || { skus: 0, value: 0 }; document.getElementById('k' + c + '-s').textContent = N(d.skus) + ' SKUs'; document.getElementById('k' + c + '-v').textContent = F(d.value); });
       const ax = sm['AX'] || {}, az = sm['AZ'] || {}, cz = sm['CZ'] || {};
       const nt = document.getElementById('abN'); const ins = [];
-      if (ax.skus > 0) ins.push(`<b>${N(ax.skus)} AX items (${FV(ax.value)})</b> — high-value stable demand`);
-      if (az.skus > 0) ins.push(`<b>${N(az.skus)} AZ items (${FV(az.value)})</b> — high-value erratic: review urgently`);
-      if (cz.skus > 0) ins.push(`<b>${N(cz.skus)} CZ items (${FV(cz.value)})</b> — elimination candidates`);
+      if (ax.skus > 0) ins.push('<b>' + N(ax.skus) + ' AX items (' + FV(ax.value) + ')</b> — high-value stable demand');
+      if (az.skus > 0) ins.push('<b>' + N(az.skus) + ' AZ items (' + FV(az.value) + ')</b> — high-value erratic: review urgently');
+      if (cz.skus > 0) ins.push('<b>' + N(cz.skus) + ' CZ items (' + FV(cz.value) + ')</b> — elimination candidates');
       if (ins.length) { nt.style.display = ''; nt.innerHTML = '<b>⚠ Insights:</b><br>' + ins.join('<br>') } else { nt.style.display = 'none' }
       await lABSGs();
     }
@@ -2475,10 +2591,11 @@
     function renderAbTable() {
       const wrap = document.getElementById('abTableWrap');
       if (!abSGData.length) { wrap.innerHTML = '<div class="em">No data</div>'; document.getElementById('abC').textContent = '0'; return }
-      let html = `<table class="cat-table"><thead><tr><th style="width:24px"></th><th>Sub-Group</th><th class="R">SKUs</th><th class="R" style="color:#ef4444">A (Top 80%)</th><th class="R" style="color:#f59e0b">B</th><th class="R" style="color:#10b981">C</th><th class="R" style="color:#059669">X (Stable)</th><th class="R" style="color:#d97706">Y</th><th class="R" style="color:#dc2626">Z (Erratic)</th><th class="R">Value</th></tr></thead><tbody>`;
+      let html = `<table class="cat-table"><thead><tr><th style="width:24px"></th><th style="width:30px">#</th><th>Sub-Group</th><th class="R">SKUs</th><th class="R" style="color:#ef4444">A (Top 80%)</th><th class="R" style="color:#f59e0b">B</th><th class="R" style="color:#10b981">C</th><th class="R" style="color:#059669">X (Stable)</th><th class="R" style="color:#d97706">Y</th><th class="R" style="color:#dc2626">Z (Erratic)</th><th class="R">Value</th></tr></thead><tbody>`;
       abSGData.forEach((v, idx) => {
         html += `<tr class="cat-row" data-idx="${idx}" data-sg="${v.SubGroup}" onclick="abToggleSG('${v.SubGroup.replace(/'/g, "\\'")}',${idx},this)">
      <td><span class="cat-chevron">›</span></td>
+     <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
      <td style="font-weight:700">${v.SubGroup}</td>
      <td class="R m">${N(v.TotalSKUs)}</td>
      <td class="R m" style="color:#ef4444">${N(v.A_Count)}</td>
@@ -2489,7 +2606,7 @@
      <td class="R m" style="color:#dc2626">${N(v.Z_Count)}</td>
      <td class="R m">${FsV(v.StockValue)}</td>
     </tr>
-    <tr class="cat-items-row" id="ab-items-${idx}"><td colspan="10"><div class="cat-items-inner" id="ab-inner-${idx}"><div class="ld" style="padding:12px">Loading...</div></div></td></tr>`;
+    <tr class="cat-items-row" id="ab-items-${idx}"><td colspan="11"><div class="cat-items-inner" id="ab-inner-${idx}"><div class="ld" style="padding:12px">Loading...</div></div></td></tr>`;
       });
       html += '</tbody></table>';
       wrap.innerHTML = html;
@@ -2514,15 +2631,15 @@
       const abTotStock=d.reduce((s,r)=>s+(+r.TotalOnHand||0),0);
       const abTotVal=d.reduce((s,r)=>s+(+r.StockValue||0),0);
       const abTotAvg=d.reduce((s,r)=>s+(+r.AvgMonthlyOut||0),0);
-      const html = d.length ? `<table><thead><tr><th>ABC</th><th>XYZ</th><th>Combo</th><th>Type</th><th title="Value rank">Rank</th><th>Item Code</th><th>Item Name</th><th class="R">Stock</th><th class="R">Value</th>
-   <th class="R"><span class="tip">AVG/MO<span class="tip-txt">Average units sold per month over last 3 months</span></span></th>
-   <th class="R"><span class="tip">COV<span class="tip-txt">Coefficient of Variation — demand variability. 0 = perfectly stable, &gt;1 = very erratic</span></span></th>
-   <th class="R"><span class="tip">CUM%<span class="tip-txt">Cumulative % of total stock value. A = 0–80%, B = 80–95%, C = 95–100%</span></span></th>
-   <th></th>
-  </tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="7"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td class="R m">${N(Math.round(abTotStock))}</td><td class="R m">${FV(abTotVal)}</td><td class="R m">${N(Math.round(abTotAvg))}</td><td colspan="3">–</td></tr>`+
-        d.map(r => {
+      const html = d.length ? `<table><thead><tr><th style="width:30px">#</th><th>ABC</th><th>XYZ</th><th>Combo</th><th>Type</th><th title="Value rank">Rank</th><th>Item Code</th><th>Item Name</th><th class="R">Stock</th><th class="R">Value</th>
+    <th class="R"><span class="tip">AVG/MO<span class="tip-txt">Average units sold per month over last 3 months</span></span></th>
+    <th class="R"><span class="tip">COV<span class="tip-txt">Coefficient of Variation — demand variability. 0 = perfectly stable, &gt;1 = very erratic</span></span></th>
+    <th class="R"><span class="tip">CUM%<span class="tip-txt">Cumulative % of total stock value. A = 0–80%, B = 80–95%, C = 95–100%</span></span></th>
+    <th></th>
+   </tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="8"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td class="R m">${N(Math.round(abTotStock))}</td><td class="R m">${FV(abTotVal)}</td><td class="R m">${N(Math.round(abTotAvg))}</td><td colspan="3">–</td></tr>`+
+        d.map((r,idx) => {
           const aC = r.ABCClass === 'A' ? 'b-d' : r.ABCClass === 'B' ? 'b-w' : 'b-ok'; const xC = r.XYZClass === 'X' ? 'b-ok' : r.XYZClass === 'Y' ? 'b-w' : 'b-d'; const cov = r.CoV >= 9000 ? '–' : r.CoV != null ? r.CoV.toFixed(2) : '–';
-          return `<tr><td><span class="bd ${aC}">${r.ABCClass}</span></td><td><span class="bd ${xC}">${r.XYZClass}</span></td>
+          return `<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td><span class="bd ${aC}">${r.ABCClass}</span></td><td><span class="bd ${xC}">${r.XYZClass}</span></td>
      <td><span class="bd" style="background:${CC[r.ABCXYZClass] || '#f3f4f6'};color:${CT[r.ABCXYZClass] || '#374151'}">${r.ABCXYZClass}</span></td>
      <td>${typBadge(r.ItemType, r.ItemName)}</td><td class="m">${r.Rank}</td>
      <td class="m">${r.ItemCode}</td><td>${r.ItemName || ''}</td>
@@ -2558,11 +2675,12 @@
       const agTotQty = d.reduce((s, r) => s + (+r.Qty || 0), 0);
       const agTotVal = d.reduce((s, r) => s + (+r.Value || 0), 0);
       document.getElementById('agT').innerHTML = d.length ?
-        `<table class="cat-table"><thead><tr><th style="width:24px"></th><th>Category</th><th>Bucket</th><th class="R">Items</th><th class="R">Qty</th><th class="R">Value</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td>–</td><td colspan="2"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} rows)</span></td><td class="R m">${N(agTotItems)}</td><td class="R m">${N(Math.round(agTotQty))}</td><td class="R m">${FV(agTotVal)}</td></tr>` +
+        `<table class="cat-table"><thead><tr><th style="width:24px"></th><th style="width:30px">#</th><th>Category</th><th>Bucket</th><th class="R">Items</th><th class="R">Qty</th><th class="R">Value</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td>–</td><td colspan="3"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} rows)</span></td><td class="R m">${N(agTotItems)}</td><td class="R m">${N(Math.round(agTotQty))}</td><td class="R m">${FV(agTotVal)}</td></tr>` +
         d.map((r, idx) => {
           const cl = r.Bucket === '0-30' ? 'b-ok' : r.Bucket === '90+' ? 'b-d' : 'b-w';
           return `<tr class="cat-row" data-idx="${idx}" onclick="drAg('${r.Bucket}','${r.Category}',${idx},this)">
      <td><span class="cat-chevron">›</span></td>
+     <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
      <td>${r.Category}</td><td><span class="bd ${cl}">${r.Bucket}d sitting</span></td>
      <td class="R m">${N(r.Items)}</td><td class="R m">${N(r.Qty)}</td><td class="R m">${FV(r.Value)}</td>
     </tr>
@@ -2586,8 +2704,8 @@
       const agDrillTotQty = d.reduce((s, r) => s + (+r.Qty || 0), 0);
       const agDrillTotVal = d.reduce((s, r) => s + (+r.Value || 0), 0);
       const html = d.length ?
-        `<table><thead><tr><th>Item Code</th><th>Item Name</th><th>WH</th><th>First Receipt</th><th class="R">Days Sitting</th><th class="R">Qty</th><th class="R">Value</th><th></th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="5"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} rows)</span></td><td class="R m">${N(Math.round(agDrillTotQty))}</td><td class="R m">${FV(agDrillTotVal)}</td><td>–</td></tr>` +
-        d.map(r => `<tr><td class="m">${r.ItemCode}</td><td>${r.ItemName || ''}</td><td class="m">${r.WhsCode || ''}</td><td class="m">${r.FirstReceiptDate || ''}</td>
+        `<table><thead><tr><th style="width:30px">#</th><th>Item Code</th><th>Item Name</th><th>WH</th><th>First Receipt</th><th class="R">Days Sitting</th><th class="R">Qty</th><th class="R">Value</th><th></th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="6"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} rows)</span></td><td class="R m">${N(Math.round(agDrillTotQty))}</td><td class="R m">${FV(agDrillTotVal)}</td><td>–</td></tr>` +
+        d.map((r,idx) => `<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td class="m">${r.ItemCode}</td><td>${r.ItemName || ''}</td><td class="m">${r.WhsCode || ''}</td><td class="m">${r.FirstReceiptDate || ''}</td>
    <td class="R m" style="color:${r.DaysSitting > 90 ? '#dc2626' : r.DaysSitting > 60 ? '#d97706' : '#059669'}">${N(r.DaysSitting)}d</td>
    <td class="R m">${N(r.Qty)}</td><td class="R m">${FV(r.Value)}</td>
    <td><button class="trace-btn" onclick="goToTrace(this.dataset.code,this.dataset.name)" data-code="${r.ItemCode}" data-name="${r.ItemName || ''}">🔍 Trace</button></td></tr>`).join('') + '</tbody></table>' :
@@ -2697,7 +2815,7 @@
       const pmInvTotalVal=pmInvoices.reduce((s,r)=>s+(+r.LineTotal||0),0);
       window._pmBomData=pmBom;window._pmSummaryCode=code;window._pmSummaryPeriod=summaryPeriod;
       const uniqueTypes = [...new Set(log.map(r => r.TransType))];
-      const productionLog = log.filter(r => r.TransType === 59);
+      const productionLog = log.filter(r => r.TransType === 101);
       const totalProdQty = productionLog.reduce((s, r) => s + (+r.InQty || 0), 0);
 
       // Build month options (last 24 months)
@@ -2753,76 +2871,76 @@
    ${uniqueTypes.map(t => { const tp = tType(t); return `<button class="pl" onclick="traceToggleType(${t},this)">${tp.icon} ${tp.label}</button>` }).join('')}
   </div>
   <div class="tabs">
-   <div class="tab on" onclick="traceTab('log',this)">📋 Transaction Log (${log.length})</div>
-   ${isFG ? `<div class="tab" onclick="traceTab('returns',this)">↩️ Returns (${returns.length})</div>` : ''}
-   ${isFG ? `<div class="tab" onclick="traceTab('disasm',this)">🔧 Disassembly (${disasm.length})</div>` : ''}
-   ${isPM ? `<div class="tab" onclick="traceTab('pmbom',this)">🏭 Used in FG (${pmBom.length})</div>` : ''}
-   ${isPM ? `<div class="tab" onclick="traceTab('pmconsumption',this)">📊 Consumption (${pmConsumption.length}m)</div>` : ''}
-   ${isPM ? `<div class="tab" onclick="traceTab('pminvoices',this)">🚚 Purchase Receipts (${pmInvoices.length})</div>` : ''}
-   ${isPM ? `<div class="tab" onclick="traceTab('pmsummary',this)">📋 Summary</div>` : ''}
+   <div class="tab ${traceActiveTab==='log'?'on':''}" onclick="traceTab('log',this)">📋 Transaction Log (${log.length})</div>
+   ${isFG ? `<div class="tab ${traceActiveTab==='returns'?'on':''}" onclick="traceTab('returns',this)">↩️ Returns (${returns.length})</div>` : ''}
+   ${isFG ? `<div class="tab ${traceActiveTab==='disasm'?'on':''}" onclick="traceTab('disasm',this)">🔧 Disassembly (${disasm.length})</div>` : ''}
+   ${isPM ? `<div class="tab ${traceActiveTab==='pmbom'?'on':''}" onclick="traceTab('pmbom',this)">🏭 Used in FG (${pmBom.length})</div>` : ''}
+   ${isPM ? `<div class="tab ${traceActiveTab==='pmconsumption'?'on':''}" onclick="traceTab('pmconsumption',this)">📊 Consumption (${pmConsumption.length}m)</div>` : ''}
+   ${isPM ? `<div class="tab ${traceActiveTab==='pminvoices'?'on':''}" onclick="traceTab('pminvoices',this)">🚚 Purchase Receipts (${pmInvoices.length})</div>` : ''}
+   ${isPM ? `<div class="tab ${traceActiveTab==='pmsummary'?'on':''}" onclick="traceTab('pmsummary',this)">📋 Summary</div>` : ''}
   </div>
-  <div class="tab-pane on" id="trace-tab-log">
+  <div class="tab-pane ${traceActiveTab==='log'?'on':''}" id="trace-tab-log">
    <div class="tc">
     <div class="tb"><h3>Transaction Log</h3><input class="sr" id="traceLogS" placeholder="Search..." oninput="traceFilterLog()"><span class="cnt" id="traceLogC">${log.length} rows</span></div>
     <div class="ts" id="traceLogT" style="max-height:500px">${traceBuildTable(log)}</div>
    </div>
   </div>
   ${isFG ? `
-  <div class="tab-pane" id="trace-tab-production">
+  <div class="tab-pane ${traceActiveTab==='production'?'on':''}" id="trace-tab-production">
     <div class="tc"><div class="tb"><h3>🏭 Production Receipts</h3><span class="cnt">${productionLog.length} batches · ${N(Math.round(totalProdQty))} units</span></div>
     <div class="ts" style="max-height:500px">${productionLog.length ?
-             `<table><thead><tr><th>Date</th><th>Order #</th><th>Warehouse</th><th class="R">Qty Produced</th><th>Comments</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="3"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${productionLog.length} batches)</span></td><td class="R m" style="color:#059669">${N(Math.round(totalProdQty))}</td><td>–</td></tr>` +
-             productionLog.map(r => `<tr><td class="m">${r.DocDate || '–'}</td><td class="m">${r.BaseRef || '–'}</td><td class="m">${r.WhsName || '–'}</td><td class="R m" style="color:#059669;font-weight:800">${N(r.InQty)}</td><td style="font-size:12px;color:var(--tx2)">${r.Comments || '–'}</td></tr>`).join('') + '</tbody></table>' :
+             `<table><thead><tr><th style="width:30px">#</th><th>Date</th><th>Order #</th><th>Warehouse</th><th class="R">Qty Produced</th><th>Comments</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="4"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${productionLog.length} batches)</span></td><td class="R m" style="color:#059669">${N(Math.round(totalProdQty))}</td><td>–</td></tr>` +
+             productionLog.map((r,idx) => `<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td class="m">${r.DocDate || '–'}</td><td class="m">${r.BaseRef || '–'}</td><td class="m">${r.WhsName || '–'}</td><td class="R m" style="color:#059669;font-weight:800">${N(r.InQty)}</td><td style="font-size:12px;color:var(--tx2)">${r.Comments || '–'}</td></tr>`).join('') + '</tbody></table>' :
              '<div class="em">No production history found for this period</div>'}
     </div></div>
   </div>` : ''}
   ${isFG ? `
-  <div class="tab-pane" id="trace-tab-returns">
+  <div class="tab-pane ${traceActiveTab==='returns'?'on':''}" id="trace-tab-returns">
    <div class="tc"><div class="tb"><h3>↩️ Returns After Sale</h3><span class="cnt">${returns.length} returns · ${N(Math.round(totalRet))} units</span></div>
    <div class="ts" style="max-height:500px">${returns.length ?
-            `<table><thead><tr><th>Date</th><th>Type</th><th>Customer</th><th>Warehouse</th><th class="R">Qty</th><th class="R">Value</th><th>Memo</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="4"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${returns.length} rows)</span></td><td class="R m" style="color:#dc2626">+${N(Math.round(totalRet))}</td><td class="R m">${FV(totalRetVal)}</td><td>–</td></tr>` +
-            returns.map(r => `<tr><td class="m">${r.DocDate || '–'}</td><td><span style="padding:2px 7px;border-radius:6px;font-size:10px;font-weight:800;background:#fee2e2;color:#991b1b">${r.ReturnType}</span></td><td>${r.CardName || '–'}</td><td class="m">${r.Warehouse || '–'}</td><td class="R m" style="color:#dc2626;font-weight:800">+${N(r.ReturnQty)}</td><td class="R m">${FV(r.TransValue)}</td><td style="font-size:12px;color:var(--tx2)">${r.JrnlMemo || '–'}</td></tr>`).join('') + '</tbody></table>' :
+            `<table><thead><tr><th style="width:30px">#</th><th>Date</th><th>Type</th><th>Customer</th><th>Warehouse</th><th class="R">Qty</th><th class="R">Value</th><th>Memo</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="5"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${returns.length} rows)</span></td><td class="R m" style="color:#dc2626">+${N(Math.round(totalRet))}</td><td class="R m">${FV(totalRetVal)}</td><td>–</td></tr>` +
+            returns.map((r,idx) => `<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td class="m">${r.DocDate || '–'}</td><td><span style="padding:2px 7px;border-radius:6px;font-size:10px;font-weight:800;background:#fee2e2;color:#991b1b">${r.ReturnType}</span></td><td>${r.CardName || '–'}</td><td class="m">${r.Warehouse || '–'}</td><td class="R m" style="color:#dc2626;font-weight:800">+${N(r.ReturnQty)}</td><td class="R m">${FV(r.TransValue)}</td><td style="font-size:12px;color:var(--tx2)">${r.JrnlMemo || '–'}</td></tr>`).join('') + '</tbody></table>' :
             '<div class="em">No returns found</div>'}
    </div></div>
   </div>
-  <div class="tab-pane" id="trace-tab-disasm">
+  <div class="tab-pane ${traceActiveTab==='disasm'?'on':''}" id="trace-tab-disasm">
    <div class="tc"><div class="tb"><h3>🔧 Disassembly Orders</h3><span class="cnt">${disasm.length} orders</span></div>
    <div class="ts" style="max-height:500px">${disasm.length ?
-            `<table><thead><tr><th>WO#</th><th>Status</th><th>Start</th><th>Due</th><th>Close</th><th class="R">Planned</th><th class="R">Actual</th><th>Comments</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="5"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${disasm.length} orders)</span></td><td class="R m">${N(Math.round(totalDisPlanned))}</td><td class="R m" style="color:#059669">${N(Math.round(totalDisActual))}</td><td>–</td></tr>` +
-            disasm.map(r => {
+            `<table><thead><tr><th style="width:30px">#</th><th>WO#</th><th>Status</th><th>Start</th><th>Due</th><th>Close</th><th class="R">Planned</th><th class="R">Actual</th><th>Comments</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="6"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${disasm.length} orders)</span></td><td class="R m">${N(Math.round(totalDisPlanned))}</td><td class="R m" style="color:#059669">${N(Math.round(totalDisActual))}</td><td>–</td></tr>` +
+            disasm.map((r,idx) => {
               const st = r.Status === 'R' ? 'Released' : r.Status === 'L' ? 'Closed' : 'Planned'; const sc = r.Status === 'L' ? 'b-ok' : r.Status === 'R' ? 'b-i' : 'b-w';
-              return `<tr><td class="m">${r.DocNum}</td><td><span class="bd ${sc}">${st}</span></td><td class="m">${r.StartDate || '–'}</td><td class="m">${r.DueDate || '–'}</td><td class="m">${r.CloseDate || '–'}</td><td class="R m">${N(r.PlannedQty)}</td><td class="R m" style="color:#059669;font-weight:800">${N(r.ActualQty)}</td><td style="font-size:11px;color:var(--mt)">${r.Comments || '–'}</td></tr>`
+              return `<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td class="m">${r.DocNum}</td><td><span class="bd ${sc}">${st}</span></td><td class="m">${r.StartDate || '–'}</td><td class="m">${r.DueDate || '–'}</td><td class="m">${r.CloseDate || '–'}</td><td class="R m">${N(r.PlannedQty)}</td><td class="R m" style="color:#059669;font-weight:800">${N(r.ActualQty)}</td><td style="font-size:11px;color:var(--mt)">${r.Comments || '–'}</td></tr>`
             }).join('') + '</tbody></table>' :
             '<div class="em">No disassembly orders</div>'}
    </div></div>
   </div>` : ''}
   ${isPM ? `
-  <div class="tab-pane" id="trace-tab-pmbom">
+  <div class="tab-pane ${traceActiveTab==='pmbom'?'on':''}" id="trace-tab-pmbom">
    <div class="tc"><div class="tb"><h3>🏭 FG Items Using This PM</h3><span class="cnt">${pmBom.length} FG items</span></div>
    <div class="ts" style="max-height:500px">${pmBom.length ?
-    `<table><thead><tr><th>FG Code</th><th>FG Name</th><th>Sub Group</th><th class="R">Qty / Unit</th><th class="R">FG On Hand</th><th class="R">FG Stock Value</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="3"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${pmBom.length} FG items)</span></td><td class="R m">–</td><td class="R m" style="color:#059669">${N(Math.round(pmBomTotalOnHand))}</td><td class="R m">${FV(pmBomTotalStockVal)}</td></tr>` +
-    pmBom.map(r => `<tr><td class="m">${r.FGCode}</td><td><b>${r.FGName}</b></td><td><span class="bd b-w">${r.SubGroup}</span></td><td class="R m">${r.QtyPerUnit}</td><td class="R m" style="color:#059669;font-weight:800">${N(r.FGOnHand)}</td><td class="R m">${FV(r.FGStockValue)}</td></tr>`).join('') + '</tbody></table>' :
+    `<table><thead><tr><th style="width:30px">#</th><th>FG Code</th><th>FG Name</th><th>Sub Group</th><th class="R">Qty / Unit</th><th class="R">FG On Hand</th><th class="R">FG Stock Value</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="4"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${pmBom.length} FG items)</span></td><td class="R m">–</td><td class="R m" style="color:#059669">${N(Math.round(pmBomTotalOnHand))}</td><td class="R m">${FV(pmBomTotalStockVal)}</td></tr>` +
+    pmBom.map((r,idx) => `<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td class="m">${r.FGCode}</td><td><b>${r.FGName}</b></td><td><span class="bd b-w">${r.SubGroup}</span></td><td class="R m">${r.QtyPerUnit}</td><td class="R m" style="color:#059669;font-weight:800">${N(r.FGOnHand)}</td><td class="R m">${FV(r.FGStockValue)}</td></tr>`).join('') + '</tbody></table>' :
     '<div class="em">This PM is not linked to any FG in BOM</div>'}
    </div></div>
   </div>
-  <div class="tab-pane" id="trace-tab-pmconsumption">
+  <div class="tab-pane ${traceActiveTab==='pmconsumption'?'on':''}" id="trace-tab-pmconsumption">
    <div class="tc"><div class="tb"><h3>📊 Monthly Consumption (Last 24 Months)</h3><span class="cnt">${pmConsumption.length} months · Total consumed: ${N(pmConsumption.reduce((s, r) => s + (+r.ConsumedQty || 0), 0))} units</span></div>
    <div class="ts" style="max-height:500px">${pmConsumption.length ?
-    `<table><thead><tr><th>Month</th><th class="R" style="color:#059669">Received (+)</th><th class="R" style="color:#dc2626">Consumed (−)</th><th class="R">Net Change</th><th class="R">Consumed Value</th><th class="R" title="Number of different dates movement happened this month">Active Days</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${pmConsumption.length}m)</span></td><td class="R m" style="color:#059669">${pmConsTotalRec>0?'+'+N(Math.round(pmConsTotalRec)):'–'}</td><td class="R m" style="color:#dc2626">${N(Math.round(pmConsTotalCon))}</td><td class="R m" style="color:${pmConsTotalNet>0?'#059669':pmConsTotalNet<0?'#dc2626':'var(--mt)'}">${pmConsTotalNet>0?'+':''}${N(Math.round(pmConsTotalNet))}</td><td class="R m">${FV(pmConsTotalVal)}</td><td class="R m" style="color:var(--mt)">${pmConsTotalDays} days</td></tr>` +
-    pmConsumption.map(r => { const net = +(r.NetChange ?? 0); const netColor = net > 0 ? '#059669' : net < 0 ? '#dc2626' : 'var(--mt)'; const netSign = net > 0 ? '+' : '';
-      return `<tr><td class="m"><b>${r.Month}</b></td><td class="R m" style="color:#059669;font-weight:700">${(+r.ReceivedQty || 0) > 0 ? '+' + N(r.ReceivedQty) : '–'}</td><td class="R m" style="color:#dc2626;font-weight:800">${N(r.ConsumedQty)}</td><td class="R m" style="color:${netColor};font-weight:800">${netSign}${N(Math.round(net))}</td><td class="R m">${FV(r.ConsumedValue)}</td><td class="R m" style="color:var(--mt)">${r.TxnDays} days</td></tr>` }).join('') + '</tbody></table>' :
+    `<table><thead><tr><th style="width:30px">#</th><th>Month</th><th class="R" style="color:#059669">Received (+)</th><th class="R" style="color:#dc2626">Consumed (−)</th><th class="R">Net Change</th><th class="R">Consumed Value</th><th class="R" title="Number of different dates movement happened this month">Active Days</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="2"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${pmConsumption.length}m)</span></td><td class="R m" style="color:#059669">${pmConsTotalRec>0?'+'+N(Math.round(pmConsTotalRec)):'–'}</td><td class="R m" style="color:#dc2626">${N(Math.round(pmConsTotalCon))}</td><td class="R m" style="color:${pmConsTotalNet>0?'#059669':pmConsTotalNet<0?'#dc2626':'var(--mt)'}">${pmConsTotalNet>0?'+':''}${N(Math.round(pmConsTotalNet))}</td><td class="R m">${FV(pmConsTotalVal)}</td><td class="R m" style="color:var(--mt)">${pmConsTotalDays} days</td></tr>` +
+    pmConsumption.map((r,idx) => { const net = +(r.NetChange ?? 0); const netColor = net > 0 ? '#059669' : net < 0 ? '#dc2626' : 'var(--mt)'; const netSign = net > 0 ? '+' : '';
+      return `<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td class="m"><b>${r.Month}</b></td><td class="R m" style="color:#059669;font-weight:700">${(+r.ReceivedQty || 0) > 0 ? '+' + N(r.ReceivedQty) : '–'}</td><td class="R m" style="color:#dc2626;font-weight:800">${N(r.ConsumedQty)}</td><td class="R m" style="color:${netColor};font-weight:800">${netSign}${N(Math.round(net))}</td><td class="R m">${FV(r.ConsumedValue)}</td><td class="R m" style="color:var(--mt)">${r.TxnDays} days</td></tr>` }).join('') + '</tbody></table>' :
     '<div class="em">No consumption data in last 24 months</div>'}
    </div></div>
   </div>
-  <div class="tab-pane" id="trace-tab-pminvoices">
+  <div class="tab-pane ${traceActiveTab==='pminvoices'?'on':''}" id="trace-tab-pminvoices">
    <div class="tc"><div class="tb"><h3>🚚 Purchase Receipts (Goods Receipt PO)</h3><span class="cnt">${pmInvoices.length} receipts · ${FV(pmInvoices.reduce((s, r) => s + (+r.LineTotal || 0), 0))}</span></div>
    <div class="ts" style="max-height:500px">${pmInvoices.length ?
-    `<table><thead><tr><th>Doc#</th><th>Date</th><th>Supplier</th><th class="R">Qty</th><th class="R">Unit Price</th><th class="R">Total</th><th>Status</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="3"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${pmInvoices.length} receipts)</span></td><td class="R m" style="color:#059669">${N(Math.round(pmInvTotalQty))}</td><td class="R m">–</td><td class="R m">${FV(pmInvTotalVal)}</td><td>–</td></tr>` +
-    pmInvoices.map(r => `<tr><td class="m">${r.DocNum}</td><td class="m">${r.DocDate || '–'}</td><td>${r.Supplier || '–'}</td><td class="R m" style="color:#059669;font-weight:800">${N(r.Qty)}</td><td class="R m">${r.UnitPrice}</td><td class="R m" style="font-weight:800">${FV(r.LineTotal)}</td><td><span class="bd ${r.Status === 'Open' ? 'b-i' : 'b-ok'}">${r.Status}</span></td></tr>`).join('') + '</tbody></table>' :
+    `<table><thead><tr><th style="width:30px">#</th><th>Doc#</th><th>Date</th><th>Supplier</th><th class="R">Qty</th><th class="R">Unit Price</th><th class="R">Total</th><th>Status</th></tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="4"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${pmInvoices.length} receipts)</span></td><td class="R m" style="color:#059669">${N(Math.round(pmInvTotalQty))}</td><td class="R m">–</td><td class="R m">${FV(pmInvTotalVal)}</td><td>–</td></tr>` +
+    pmInvoices.map((r,idx) => `<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td class="m">${r.DocNum}</td><td class="m">${r.DocDate || '–'}</td><td>${r.Supplier || '–'}</td><td class="R m" style="color:#059669;font-weight:800">${N(r.Qty)}</td><td class="R m">${r.UnitPrice}</td><td class="R m" style="font-weight:800">${FV(r.LineTotal)}</td><td><span class="bd ${r.Status === 'Open' ? 'b-i' : 'b-ok'}">${r.Status}</span></td></tr>`).join('') + '</tbody></table>' :
     '<div class="em">No purchase invoices found</div>'}
    </div></div>
   </div>
-  <div class="tab-pane" id="trace-tab-pmsummary">
+  <div class="tab-pane ${traceActiveTab==='pmsummary'?'on':''}" id="trace-tab-pmsummary">
    <div class="tc">
     <div class="tb"><h3>📋 PM Summary</h3></div>
     <div id="pmSummaryContent">${buildPMSummaryHTML(pmSummaryData,pmBom,summaryPeriod)}</div>
@@ -2856,10 +2974,10 @@
       const tIn=rows.reduce((s,r)=>s+(+r.InQty||0),0);
       const tOut=rows.reduce((s,r)=>s+(+r.OutQty||0),0);
       const tVal=rows.reduce((s,r)=>s+(+r.TransValue||0),0);
-      return `<table><thead><tr><th>Date</th><th>Type</th><th>Warehouse</th><th>Journal Memo</th><th>Party/Ref</th><th class="R" style="color:#059669">In Qty</th><th class="R" style="color:#dc2626">Out Qty</th><th class="R">Value</th><th>Comments</th></tr></thead>
-  <tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="5"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${rows.length} rows)</span></td><td class="R m" style="color:#059669">+${N(Math.round(tIn))}</td><td class="R m" style="color:#dc2626">-${N(Math.round(tOut))}</td><td class="R m">${FV(tVal)}</td><td>–</td></tr>${rows.map(r => {
+      return `<table><thead><tr><th style="width:30px">#</th><th>Date</th><th>Type</th><th>Warehouse</th><th>Journal Memo</th><th>Party/Ref</th><th class="R" style="color:#059669">In Qty</th><th class="R" style="color:#dc2626">Out Qty</th><th class="R">Value</th><th>Comments</th></tr></thead>
+  <tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="6"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${rows.length} rows)</span></td><td class="R m" style="color:#059669">+${N(Math.round(tIn))}</td><td class="R m" style="color:#dc2626">-${N(Math.round(tOut))}</td><td class="R m">${FV(tVal)}</td><td>–</td></tr>${rows.map((r,idx) => {
         const tp = tType(r.TransType); const isIn = (+r.InQty || 0) > 0, isOut = (+r.OutQty || 0) > 0; const ref = [r.CardName, r.BaseRef].filter(Boolean).join(' · ') || '–';
-        return `<tr><td class="m" style="white-space:nowrap">${r.DocDate || '–'}</td>
+        return `<tr><td class="m" style="color:var(--mt);width:30px">${idx+1}</td><td class="m" style="white-space:nowrap">${r.DocDate || '–'}</td>
     <td><span style="display:inline-flex;align-items:center;gap:3px;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:800;background:${tp.bg};color:${tp.color};white-space:nowrap">${tp.icon} ${tp.label}</span></td>
     <td><div class="m">${r.Warehouse || '–'}</div><div style="font-size:11px;color:var(--mt)">${r.WhsName || ''}</div></td>
     <td style="font-size:12px;color:var(--tx2);max-width:160px">${r.JrnlMemo || '–'}</td>
@@ -2870,7 +2988,7 @@
     <td style="font-size:11px;color:var(--mt);max-width:130px">${r.Comments || '–'}</td></tr>`
       }).join('')}</tbody></table>`;
     }
-    function traceTab(name, el) { document.querySelectorAll('.tab').forEach(t => t.classList.remove('on')); document.querySelectorAll('.tab-pane').forEach(t => t.classList.remove('on')); el.classList.add('on'); document.getElementById('trace-tab-' + name).classList.add('on') }
+    function traceTab(name, el) { traceActiveTab = name; document.querySelectorAll('.tab').forEach(t => t.classList.remove('on')); document.querySelectorAll('.tab-pane').forEach(t => t.classList.remove('on')); el.classList.add('on'); document.getElementById('trace-tab-' + name).classList.add('on') }
     function traceSetAllTypes() { traceTypeFilter = []; document.querySelectorAll('#traceRight .pl').forEach(p => { if (p.id === 'ttAll') p.classList.add('on'); else p.classList.remove('on') }); applyTraceFilter() }
     function traceToggleType(t, btn) {
       document.getElementById('ttAll').classList.remove('on');
@@ -3034,18 +3152,19 @@
       </div>
       <div class="ts" style="max-height:300px">
        <table><thead><tr>
-        <th>FG Code</th><th>FG Name</th><th>Sub Group</th><th class="R">Qty/Unit</th>
-        <th class="R">Opening</th>
-        <th class="R" style="color:#059669">Total IN</th>
-        <th class="R" style="color:#15803d">Production (101)</th>
-        <th class="R" style="color:#dc2626">Total OUT</th>
-        <th class="R" style="color:#b91c1c">A/R Invoice (13)</th>
-        <th class="R" style="color:#1d4ed8">On Hand</th>
-        <th class="R">Value</th>
-        <th>Warehouses</th>
-       </tr></thead><tbody>
-       <tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8">
-        <td colspan="4"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${items.length} FG SKUs)</span></td>
+         <th style="width:30px">#</th>
+         <th>FG Code</th><th>FG Name</th><th>Sub Group</th><th class="R">Qty/Unit</th>
+         <th class="R">Opening</th>
+         <th class="R" style="color:#059669">Total IN</th>
+         <th class="R" style="color:#15803d">Production (101)</th>
+         <th class="R" style="color:#dc2626">Total OUT</th>
+         <th class="R" style="color:#b91c1c">A/R Invoice (13)</th>
+         <th class="R" style="color:#1d4ed8">On Hand</th>
+         <th class="R">Value</th>
+         <th>Warehouses</th>
+        </tr></thead><tbody>
+        <tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8">
+         <td colspan="5"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${items.length} FG SKUs)</span></td>
         <td class="R m">${N(tOpen)}</td>
         <td class="R m" style="color:#059669">${N(+(t.ProductionQty||0))}</td>
         <td class="R m" style="color:#15803d">${N(+(t.ProdSpecQty||0))}</td>
@@ -3059,6 +3178,7 @@
         const rOpen=Math.round(+(r.ClosingQty||0) - +(r.ProductionQty||0) + +(r.ARInvoiceQty||0));
         const whs=(r.Warehouses||[]).map(w=>`<span class="bd b-w" style="margin:1px 2px;display:inline-block">${w.WhsCode}: ${N(+(w.OnHand||0))}</span>`).join('');
         return`<tr>
+        <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
         <td class="m">${r.FGCode}</td>
         <td><b>${r.FGName}</b></td>
         <td><span class="bd b-w">${r.SubGroup}</span></td>
@@ -3115,11 +3235,11 @@
       const plTotSugOrder=d.reduce((s,r)=>s+(+r.SuggestedOrder||0),0);
       const plTotStockVal=d.reduce((s,r)=>s+(+r.StockValue||0),0);
       document.getElementById('plT').innerHTML = `<table><thead><tr>
-   <th>Alert</th><th>Type</th><th>Item Code</th><th>Item Name</th><th>Sub-Group</th>
+   <th style="width:30px">#</th><th>Alert</th><th>Type</th><th>Item Code</th><th>Item Name</th><th>Sub-Group</th>
    <th class="R">On Hand</th><th class="R">Avg Daily Out</th><th class="R">Days Left</th>
    <th class="R">Suggested Order</th><th>Trend</th><th class="R">Stock Value</th>
-  </tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="5"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td class="R m">${N(Math.round(plTotOnHand))}</td><td class="R m">–</td><td class="R m">–</td><td class="R m" style="color:#0ea5e9">${N(Math.round(plTotSugOrder))}</td><td>–</td><td class="R m">${FV(plTotStockVal)}</td></tr>`+
-        d.map(r => {
+  </tr></thead><tbody><tr style="background:#f1f5f9;font-weight:800;border-bottom:2px solid #94a3b8"><td colspan="6"><b>TOTAL</b> <span style="color:var(--mt);font-weight:600">(${d.length} items)</span></td><td class="R m">${N(Math.round(plTotOnHand))}</td><td class="R m">–</td><td class="R m">–</td><td class="R m" style="color:#0ea5e9">${N(Math.round(plTotSugOrder))}</td><td>–</td><td class="R m">${FV(plTotStockVal)}</td></tr>`+
+        d.map((r,idx) => {
           const dsl = r.DaysOfStockLeft;
           let alertBadge = '';
           if (dsl >= 0 && dsl < 7) alertBadge = '<span class="alert-red">🔴 Critical</span>';
@@ -3127,6 +3247,7 @@
           else alertBadge = '<span class="alert-green">✅ OK</span>';
           const dslDisplay = dsl === -1 ? '<span style="color:var(--mt)">∞</span>' : `<span style="color:${dsl < 7 ? '#dc2626' : dsl < 30 ? '#d97706' : '#059669'};font-weight:800">${N(dsl)}d</span>`;
           return `<tr>
+     <td class="m" style="color:var(--mt);width:30px">${idx+1}</td>
      <td>${alertBadge}</td><td>${typBadge(r.ItemType)}</td>
      <td class="m">${r.ItemCode || ''}</td><td>${r.ItemName || ''}</td>
      <td style="font-size:12px;color:var(--mt)">${r.SubGroup || '–'}</td>
@@ -3155,7 +3276,10 @@ RISING demand: ${JSON.stringify(rising.map(r => ({ code: r.ItemCode, name: r.Ite
 ZERO movement: ${JSON.stringify(nonMoving.map(r => ({ code: r.ItemCode, name: r.ItemName, onHand: r.TotalOnHand, value: r.StockValue })))}
 Total SKUs: ${plD.length}. Format each point as: • [Priority] Action — Reasoning`;
       try {
-        const res = await fetch('/' + DIVISION + '/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: prompt, context: '' }) });
+        const url1 = '/' + DIVISION + '/api/chat';
+        const url2 = '/api/chat';
+        let res = await fetch(url1, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: prompt, context: '' }) });
+        if (!res.ok) res = await fetch(url2, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: prompt, context: '' }) });
         const data = await res.json();
         txt.innerHTML = (data.reply || 'No response').replace(/•/g, '<br>•').replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
       } catch (e) { txt.innerHTML = '<span style="color:#dc2626">⚠ Could not connect to AI.</span>' }
@@ -3173,7 +3297,10 @@ Total SKUs: ${plD.length}. Format each point as: • [Priority] Action — Reaso
       cb.innerHTML += `<div class="cm a" id="aiStreaming"><div class="bl">⏳ Thinking...</div></div>`;
       cb.scrollTop = cb.scrollHeight;
       try {
-        const res = await fetch('/' + DIVISION + '/api/chat', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: q, context: ctx }) });
+        const url1 = '/' + DIVISION + '/api/chat';
+        const url2 = '/api/chat';
+        let res = await fetch(url1, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: q, context: ctx }) });
+        if (!res.ok) res = await fetch(url2, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message: q, context: ctx }) });
         const data = await res.json();
         const text = data.reply || 'Sorry, no response.';
         document.getElementById('aiStreaming').outerHTML = `<div class="cm a"><div class="bl">${text.replace(/\n/g, '<br>').replace(/\*\*(.*?)\*\*/g, '<b>$1</b>')}</div></div>`;
@@ -3226,13 +3353,11 @@ Total SKUs: ${plD.length}. Format each point as: • [Priority] Action — Reaso
     const ADMIN_USER = 'admin', ADMIN_PASS = 'jivoadmin';
     const body = document.body;
     function initAuth() {
-      if (sessionStorage.getItem('adminAuth') === 'true') {
-        body.classList.remove('locked');
-        const btn = document.getElementById('lockBtn');
-        if (btn) { btn.textContent = '🔓'; btn.title = 'Logged in as admin · Click to lock'; }
-      } else {
-        body.classList.add('locked');
-      }
+      // Auto-unlock: internal tool, no auth required
+      sessionStorage.setItem('adminAuth', 'true');
+      body.classList.remove('locked');
+      const btn = document.getElementById('lockBtn');
+      if (btn) { btn.textContent = '🔓'; btn.title = 'Values visible · Click to lock'; }
     }
     function showLoginModal() {
       if (!body.classList.contains('locked')) return;
@@ -3270,6 +3395,7 @@ Total SKUs: ${plD.length}. Format each point as: • [Priority] Action — Reaso
     initAuth();
 
     // ── INIT ──
+    switchDivision(DIVISION, true);
     load();
   </script>
 

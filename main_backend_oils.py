@@ -1,12 +1,14 @@
-import os, math, traceback
+import os, math, traceback, urllib.parse
 import pandas as pd
 import uvicorn
 from fastapi import FastAPI, Query, Request
-from fastapi.responses import HTMLResponse, JSONResponse    
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from hdbcli import dbapi    
+from fastapi.staticfiles import StaticFiles
+from hdbcli import dbapi
 from dotenv import load_dotenv
+from cache_manager import cache, cache_result
 
 load_dotenv()
 
@@ -16,9 +18,24 @@ app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.add_middleware(GZipMiddleware, minimum_size=0)
 
+# Serve Chart.js locally (no CDN needed)
+_static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
+if os.path.isdir(_static_dir):
+    app.mount("/static", StaticFiles(directory=_static_dir), name="static")
+
 SCHEMAS = {"jivo_oil": "JIVO_OIL_HANADB", "jivo_mart": "JIVO_MART_HANADB"}
 def get_schema(s): return SCHEMAS.get(s, "JIVO_OIL_HANADB")
-def conn(): return dbapi.connect(address='103.89.45.192', port=30015, user='DATA1', password='Jivo@1989')
+def conn():
+    for ip in ['192.168.1.182', '103.89.45.192']:
+        try:
+            print(f"Connecting to SAP HANA (Oils) at {ip}...")
+            c = dbapi.connect(address=ip, port=30015, user='DATA1', password='Jivo@1989')
+            print(f"Connected to SAP HANA (Oils) at {ip} successfully.")
+            return c
+        except Exception as e:
+            print(f"Failed to connect to {ip}: {str(e)}")
+    print("CRITICAL: All SAP HANA connection attempts (Oils) failed.")
+    raise Exception("Could not connect to any SAP HANA IP.")
 
 def cv(v):
     if v is None: return None
@@ -61,15 +78,19 @@ RM_VALID = ("'SPICES','OLIVE','CANOLA','DRY FRUITS/NUTS','SEEDS','VITAMINS','MUS
             "'RICE BRAN','GROUNDNUT','VEGETABLE OIL','PALMOLEIN','RICE','COTTON SEED',"
             "'MAIZE FLOUR (MAKKA ATTA)','YELLOW MUSTARD'")
 
+TRADING_VALID = ("'TRADING ITEMS'")
+GIFT_VALID = ("'GIFT PACK'")
+
 GIFT_EXCL = "AND M.\"U_Sub_Group\" NOT IN ('GIFT PACK')"
 
 def cf(c):
-    if c and c.upper() in ('FINISHED','RAW MATERIAL','PACKAGING MATERIAL'):
+    if c and c.upper() in ('FINISHED','RAW MATERIAL','PACKAGING MATERIAL','TRADING ITEMS','GIFT PACK'):
         return f"AND G.\"ItmsGrpNam\"='{c.upper()}'"
-    return "AND G.\"ItmsGrpNam\" IN ('FINISHED','RAW MATERIAL','PACKAGING MATERIAL')"
+    return "AND G.\"ItmsGrpNam\" IN ('FINISHED','RAW MATERIAL','PACKAGING MATERIAL','TRADING ITEMS','GIFT PACK')"
 
 def tf(t): return f"AND M.\"U_TYPE\"='{t}'" if t and t != 'all' else ""
 def wf(w): return f"AND W.\"WhsCode\"='{w.replace(chr(39),chr(39)+chr(39))}'" if w else ""
+def n_wf(wf_): return wf_.replace('W."WhsCode"', 'N."Warehouse"') if wf_ else ""
 def whs_f(whs):
     if not whs: return ""
     codes=["'"+safe(c.strip())+"'" for c in whs.split(',') if c.strip()]
@@ -83,8 +104,8 @@ OWN_JOIN = 'LEFT JOIN {db}.OUSR U ON CAST({tbl}."U_Owner" AS VARCHAR(20))=CAST(U
 def kpi(category:str=Query(None),schema:str=Query("jivo_oil"),whs:str=Query(None)):
     db=get_schema(schema);f=cf(category);wf_=wf(whs)
     return JSONResponse(content={"data":q(f"""SELECT
-    ROUND((SELECT SUM(W."OnHand") FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod" WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."OnHand">0 {wf_} {GIFT_EXCL.replace('M.','M.')}),0) AS "TotalQty",
-    ROUND((SELECT SUM(W."OnHand"*M."LastPurPrc") FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod" WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."OnHand">0 {wf_} {GIFT_EXCL}),0) AS "TotalValue",
+    ROUND((SELECT SUM(W."OnHand") FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod" WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."OnHand">0 {wf_} {GIFT_EXCL}),2) AS "TotalQty",
+    ROUND(COALESCE((SELECT SUM(W."StockValue") FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod" WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."OnHand">0 {wf_} {GIFT_EXCL}),0),2) AS "TotalValue",
     (SELECT COUNT(DISTINCT W."ItemCode") FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod" WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."OnHand">0 {wf_} {GIFT_EXCL}) AS "TotalSKUs",
     (SELECT COUNT(*) FROM (SELECT M."ItemCode" FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod" WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} {wf_} {GIFT_EXCL} GROUP BY M."ItemCode" HAVING SUM(W."OnHand")<=0)) AS "OutOfStockSKUs"
     FROM DUMMY""")})
@@ -92,15 +113,15 @@ def kpi(category:str=Query(None),schema:str=Query("jivo_oil"),whs:str=Query(None
 @app.get("/api/categories")
 def categories(schema:str=Query("jivo_oil")):
     db=get_schema(schema)
-    return JSONResponse(content={"data":q(f"""SELECT G."ItmsGrpNam" AS "Category",COUNT(DISTINCT W."ItemCode") AS "SKUs",ROUND(SUM(W."OnHand"),0) AS "Qty",ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "Value"
+    return JSONResponse(content={"data":q(f"""SELECT G."ItmsGrpNam" AS "Category",COUNT(DISTINCT W."ItemCode") AS "SKUs",ROUND(SUM(W."OnHand"),2) AS "Qty",ROUND(SUM(W."StockValue"),2) AS "Value"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
-    WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' AND G."ItmsGrpNam" IN ('FINISHED','RAW MATERIAL','PACKAGING MATERIAL') AND W."OnHand">0 {GIFT_EXCL}
+    WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' AND G."ItmsGrpNam" IN ('FINISHED','RAW MATERIAL','PACKAGING MATERIAL','TRADING ITEMS','GIFT PACK') AND W."OnHand">0 {GIFT_EXCL}
     GROUP BY G."ItmsGrpNam" ORDER BY "Value" DESC""")})
 
 @app.get("/api/out_of_stock")
 def out_of_stock(category:str=Query(None),schema:str=Query("jivo_oil")):
     db=get_schema(schema);f=cf(category)
-    return JSONResponse(content={"data":q(f"""SELECT G."ItmsGrpNam" AS "Category",M."ItemCode",M."ItemName",ROUND(SUM(W."OnHand"),0) AS "TotalOnHand"
+    return JSONResponse(content={"data":q(f"""SELECT G."ItmsGrpNam" AS "Category",M."ItemCode",M."ItemName",ROUND(SUM(W."OnHand"),2) AS "TotalOnHand"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
     WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} {GIFT_EXCL}
     GROUP BY G."ItmsGrpNam",M."ItemCode",M."ItemName" HAVING SUM(W."OnHand")<=0 ORDER BY G."ItmsGrpNam",M."ItemName" """)})
@@ -119,18 +140,18 @@ def warehouses(schema:str=Query("jivo_oil")):
 def warehouse_summary(category:str=Query(None),schema:str=Query("jivo_oil"),owner:str=Query(None)):
     db=get_schema(schema);f=cf(category)
     owner_f=f"AND COALESCE(U.\"U_NAME\",'–')='{safe(owner)}'" if owner else ""
-    return JSONResponse(content={"data":q(f"""
-    SELECT W."WhsCode",H."WhsName",COALESCE(U."U_NAME",'–') AS "OwnerName",
+    sql = f"""SELECT W."WhsCode",H."WhsName",COALESCE(U."U_NAME",'–') AS "OwnerName",
         COUNT(DISTINCT W."ItemCode") AS "SKUs",
-        ROUND(SUM(W."OnHand"),0) AS "Qty",ROUND(SUM(W."OnOrder"),0) AS "OnOrder",
-        ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "Value"
+        ROUND(SUM(W."OnHand"),2) AS "Qty",ROUND(SUM(W."OnOrder"),2) AS "OnOrder",
+        ROUND(SUM(W."StockValue"),2) AS "Value"
     FROM {db}.OITW W
     JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode"
     JOIN {db}.OWHS H ON W."WhsCode"=H."WhsCode"
     LEFT JOIN {db}.OUSR U ON CAST(H."U_Owner" AS VARCHAR(20))=CAST(U."USERID" AS VARCHAR(20))
     JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
-    WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."OnHand">0 {GIFT_EXCL} {owner_f}
-    GROUP BY W."WhsCode",H."WhsName",U."U_NAME" ORDER BY "Value" DESC""")})
+    WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."OnHand">0 {owner_f} {GIFT_EXCL}
+    GROUP BY W."WhsCode",H."WhsName",U."U_NAME" ORDER BY "Value" DESC"""
+    return JSONResponse(content={"data":q(sql)})
 
 @app.get("/api/warehouse_items")
 def warehouse_items(whs:str=Query(""),category:str=Query(None),schema:str=Query("jivo_oil")):
@@ -138,12 +159,13 @@ def warehouse_items(whs:str=Query(""),category:str=Query(None),schema:str=Query(
     return JSONResponse(content={"data":q(f"""
     SELECT G."ItmsGrpNam" AS "Category",W."ItemCode",M."ItemName",
         COALESCE(M."U_Sub_Group",'–') AS "SubGroup",COALESCE(M."U_TYPE",'–') AS "ItemType",
-        ROUND(W."OnHand",0) AS "OnHand",ROUND(W."OnOrder",0) AS "OnOrder",
-        ROUND(W."OnHand"-W."IsCommited"+W."OnOrder",0) AS "Available",
-        ROUND(W."OnHand"*M."LastPurPrc",0) AS "StockValue"
+        ROUND(W."OnHand",2) AS "OnHand",ROUND(W."OnOrder",2) AS "OnOrder",
+        ROUND(W."IsCommited",2) AS "Committed",
+        ROUND(W."OnHand"-W."IsCommited"+W."OnOrder",2) AS "Available",
+        ROUND(W."StockValue",2) AS "StockValue"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
     WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."WhsCode"='{s}' AND W."OnHand">0 {GIFT_EXCL}
-    ORDER BY "StockValue" DESC""")})
+    ORDER BY G."ItmsGrpNam", M."ItemName" """)})
 
 @app.get("/api/warehouse_owners")
 def warehouse_owners(schema:str=Query("jivo_oil")):
@@ -160,14 +182,14 @@ def stock_position(category:str=Query(None),schema:str=Query("jivo_oil"),whs:str
     db=get_schema(schema);f=cf(category);wf_=wf(whs)
     return JSONResponse(content={"data":q(f"""SELECT G."ItmsGrpNam" AS "Category",W."ItemCode",M."ItemName",
     W."WhsCode",H."WhsName",COALESCE(U."U_NAME",'–') AS "OwnerName",
-    ROUND(W."OnHand",0) AS "OnHand",ROUND(W."OnOrder",0) AS "OnOrder",
-    ROUND(W."OnHand"-W."IsCommited"+W."OnOrder",0) AS "Available",ROUND(W."OnHand"*M."LastPurPrc",0) AS "StockValue"
+    ROUND(W."OnHand",2) AS "OnHand",ROUND(W."OnOrder",0) AS "OnOrder",
+    ROUND(W."OnHand"-W."IsCommited"+W."OnOrder",2) AS "Available",ROUND(W."StockValue",2) AS "StockValue"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode"
     JOIN {db}.OWHS H ON W."WhsCode"=H."WhsCode"
     LEFT JOIN {db}.OUSR U ON CAST(H."U_Owner" AS VARCHAR(20))=CAST(U."USERID" AS VARCHAR(20))
     JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
     WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."OnHand">0 {wf_} {GIFT_EXCL}
-    ORDER BY "StockValue" DESC""")})
+    ORDER BY G."ItmsGrpNam", M."ItemName" """)})
 
 @app.get("/api/movement")
 def movement(days:int=Query(30),category:str=Query(None),schema:str=Query("jivo_oil"),
@@ -196,7 +218,7 @@ def movers_summary(days:int=Query(30),category:str=Query(None),schema:str=Query(
     db=get_schema(schema);f=cf(category);wf2=whs_f(whs)
     date_filter=f"AND N.\"DocDate\">='{date_from}' AND N.\"DocDate\"<='{date_to}'" if date_from and date_to else f"AND N.\"DocDate\">=ADD_DAYS(CURRENT_DATE,-{days})"
     return JSONResponse(content={"data":q(f"""SELECT X."MovementStatus" AS "Status",COUNT(*) AS "Count",ROUND(SUM(X."StockValue"),0) AS "Value",ROUND(SUM(X."TotalOnHand"),0) AS "Qty"
-    FROM (SELECT M."ItemCode",SUM(W."OnHand") AS "TotalOnHand",SUM(W."OnHand"*M."LastPurPrc") AS "StockValue",
+    FROM (SELECT M."ItemCode",SUM(W."OnHand") AS "TotalOnHand",SUM(W."StockValue") AS "StockValue",
         CASE WHEN COALESCE(MV."TotalOut",0)=0 THEN 'NON-MOVING' WHEN MV."TotalOut"<50 THEN 'SLOW' WHEN MV."TotalOut"<500 THEN 'MEDIUM' ELSE 'FAST' END AS "MovementStatus"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
     LEFT JOIN (SELECT N."ItemCode",SUM(N."OutQty") AS "TotalOut" FROM {db}.OINM N JOIN {db}.OITM I ON N."ItemCode"=I."ItemCode"
@@ -206,34 +228,32 @@ def movers_summary(days:int=Query(30),category:str=Query(None),schema:str=Query(
     GROUP BY X."MovementStatus" ORDER BY CASE X."MovementStatus" WHEN 'NON-MOVING' THEN 1 WHEN 'SLOW' THEN 2 WHEN 'MEDIUM' THEN 3 ELSE 4 END""")})
 
 @app.get("/api/movers_by_subgroup")
-def movers_by_subgroup(days:int=Query(30),item_type:str=Query(None),category:str=Query("FINISHED"),schema:str=Query("jivo_oil"),
+def movers_by_subgroup(days:int=Query(30),item_type:str=Query(None),category:str=Query(None),schema:str=Query("jivo_oil"),
                        date_from:str=Query(None),date_to:str=Query(None),whs:str=Query(None)):
-    db=get_schema(schema);type_f=tf(item_type);wf2=whs_f(whs)
-    cat_f=f"AND G.\"ItmsGrpNam\"='{category.upper()}'"
-    valid=FG_VALID if category=='FINISHED' else (PM_VALID if category=='PACKAGING MATERIAL' else RM_VALID)
+    db=get_schema(schema);type_f=tf(item_type);wf2=whs_f(whs);f=cf(category)
     date_filter=f"AND N.\"DocDate\">='{date_from}' AND N.\"DocDate\"<='{date_to}'" if date_from and date_to else f"AND N.\"DocDate\">=ADD_DAYS(CURRENT_DATE,-{days})"
     return JSONResponse(content={"data":q(f"""
-    SELECT COALESCE(CASE WHEN M."U_Sub_Group"='MUSTARD' AND M."U_TYPE"='PREMIUM' THEN 'YELLOW MUSTARD' ELSE M."U_Sub_Group" END,'UNCLASSIFIED') AS "SubGroup",
+    SELECT G."ItmsGrpNam" AS "Category", COALESCE(CASE WHEN M."U_Sub_Group"='MUSTARD' AND M."U_TYPE"='PREMIUM' THEN 'YELLOW MUSTARD' ELSE M."U_Sub_Group" END,'UNCLASSIFIED') AS "SubGroup",
         COUNT(DISTINCT M."ItemCode") AS "TotalSKUs",
-        SUM(CASE WHEN COALESCE(MV."TotalOut",0)=0 THEN 1 ELSE 0 END) AS "NonMovingSKUs",
-        SUM(CASE WHEN COALESCE(MV."TotalOut",0)>0 AND COALESCE(MV."TotalOut",0)<50 THEN 1 ELSE 0 END) AS "SlowSKUs",
-        SUM(CASE WHEN COALESCE(MV."TotalOut",0)>=50 AND COALESCE(MV."TotalOut",0)<500 THEN 1 ELSE 0 END) AS "MediumSKUs",
-        SUM(CASE WHEN COALESCE(MV."TotalOut",0)>=500 THEN 1 ELSE 0 END) AS "FastSKUs",
-        ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "StockValue",
-        ROUND(SUM(CASE WHEN COALESCE(MV."TotalOut",0)=0 THEN W."OnHand"*M."LastPurPrc" ELSE 0 END),0) AS "StuckValue"
+        COUNT(DISTINCT CASE WHEN COALESCE(MV."TotalOut",0)=0 THEN M."ItemCode" END) AS "NonMovingSKUs",
+        COUNT(DISTINCT CASE WHEN COALESCE(MV."TotalOut",0)>0 AND COALESCE(MV."TotalOut",0)<50 THEN M."ItemCode" END) AS "SlowSKUs",
+        COUNT(DISTINCT CASE WHEN COALESCE(MV."TotalOut",0)>=50 AND COALESCE(MV."TotalOut",0)<500 THEN M."ItemCode" END) AS "MediumSKUs",
+        COUNT(DISTINCT CASE WHEN COALESCE(MV."TotalOut",0)>=500 THEN M."ItemCode" END) AS "FastSKUs",
+        ROUND(SUM(W."StockValue"),2) AS "StockValue",
+        ROUND(SUM(CASE WHEN COALESCE(MV."TotalOut",0)=0 THEN W."StockValue" ELSE 0 END),2) AS "StuckValue"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
     LEFT JOIN (SELECT N."ItemCode",SUM(N."OutQty") AS "TotalOut" FROM {db}.OINM N JOIN {db}.OITM I ON N."ItemCode"=I."ItemCode"
         WHERE N."OutQty">0 {date_filter} AND I."U_Unit"='OIL' GROUP BY N."ItemCode") MV ON M."ItemCode"=MV."ItemCode"
-    WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {cat_f} AND W."OnHand">0 {wf2} AND M."U_Sub_Group" IN ({valid}) {type_f}
-    GROUP BY CASE WHEN M."U_Sub_Group"='MUSTARD' AND M."U_TYPE"='PREMIUM' THEN 'YELLOW MUSTARD' ELSE M."U_Sub_Group" END
-    ORDER BY "StuckValue" DESC,"StockValue" DESC""")})
+    WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."OnHand">0 {wf2} {type_f} {GIFT_EXCL}
+    GROUP BY G."ItmsGrpNam", CASE WHEN M."U_Sub_Group"='MUSTARD' AND M."U_TYPE"='PREMIUM' THEN 'YELLOW MUSTARD' ELSE M."U_Sub_Group" END
+    ORDER BY CASE G."ItmsGrpNam" WHEN 'FINISHED' THEN 1 WHEN 'RAW MATERIAL' THEN 2 WHEN 'PACKAGING MATERIAL' THEN 3 WHEN 'TRADING ITEMS' THEN 4 WHEN 'GIFT PACK' THEN 5 ELSE 6 END, "StuckValue" DESC,"StockValue" DESC""")})
 
 @app.get("/api/movers")
 def movers(days:int=Query(30),category:str=Query(None),subgroup:str=Query(None),item_type:str=Query(None),schema:str=Query("jivo_oil"),
-           date_from:str=Query(None),date_to:str=Query(None),whs:str=Query(None)):
-    db=get_schema(schema);f=cf(category);wf2=whs_f(whs)
-    sg="AND M.\"U_Sub_Group\"='MUSTARD' AND M.\"U_TYPE\"='PREMIUM'" if subgroup=='YELLOW MUSTARD' else (f"AND M.\"U_Sub_Group\"='{safe(subgroup)}'" if subgroup else "")
-    type_f=tf(item_type)
+           date_from:str=Query(None),date_to:str=Query(None),whs:str=Query(None),page:int=Query(1),limit:int=Query(100)):
+    db=get_schema(schema);type_f=tf(item_type);wf2=whs_f(whs)
+    f=cf(category)
+    sg="AND M.\"U_Sub_Group\"='MUSTARD' AND M.\"U_Type\"='PREMIUM'" if subgroup=='YELLOW MUSTARD' else (f"AND M.\"U_Sub_Group\"='{safe(subgroup)}'" if subgroup else "")
     if date_from and date_to:
         date_filter=f"AND N.\"DocDate\">='{date_from}' AND N.\"DocDate\"<='{date_to}'"
         day_div=f"(DAYS_BETWEEN(TO_DATE('{date_from}'),TO_DATE('{date_to}'))+1)"
@@ -244,7 +264,7 @@ def movers(days:int=Query(30),category:str=Query(None),subgroup:str=Query(None),
     SELECT G."ItmsGrpNam" AS "Category",M."ItemCode",M."ItemName",
         CASE WHEN M."U_Sub_Group"='MUSTARD' AND M."U_TYPE"='PREMIUM' THEN 'YELLOW MUSTARD' ELSE COALESCE(M."U_Sub_Group",'–') END AS "SubGroup",
         COALESCE(M."U_TYPE",'–') AS "ItemType",
-        ROUND(SUM(W."OnHand"),0) AS "TotalOnHand",ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "StockValue",
+        ROUND(SUM(W."OnHand"),2) AS "TotalOnHand",ROUND(SUM(W."StockValue"),2) AS "StockValue",
         COALESCE(MV."TotalOut",0) AS "Out{days}d",TO_DATE(MV."LastMoveDate") AS "LastMoveDate",
         CASE WHEN MV."LastMoveDate" IS NULL THEN -1 ELSE DAYS_BETWEEN(MV."LastMoveDate",CURRENT_DATE) END AS "DaysSinceMove",
         CASE WHEN COALESCE(MV."TotalOut",0)=0 THEN 'NON-MOVING' WHEN MV."TotalOut"<50 THEN 'SLOW' WHEN MV."TotalOut"<500 THEN 'MEDIUM' ELSE 'FAST' END AS "MovementStatus",
@@ -256,7 +276,7 @@ def movers(days:int=Query(30),category:str=Query(None),subgroup:str=Query(None),
         WHERE N."OutQty">0 {date_filter} AND I."U_Unit"='OIL' GROUP BY N."ItemCode") MV ON M."ItemCode"=MV."ItemCode"
     WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."OnHand">0 {wf2} {sg} {type_f} {GIFT_EXCL}
     GROUP BY G."ItmsGrpNam",M."ItemCode",M."ItemName",M."U_Sub_Group",M."U_TYPE",MV."TotalOut",MV."LastMoveDate"
-    ORDER BY COALESCE(MV."TotalOut",0) ASC,"StockValue" DESC""")})
+    ORDER BY COALESCE(MV."TotalOut",0) ASC,"StockValue" DESC LIMIT {limit} OFFSET {(page-1)*limit}""")})
 
 @app.get("/api/not_billed_summary")
 def not_billed_summary(schema:str=Query("jivo_oil")):
@@ -265,7 +285,7 @@ def not_billed_summary(schema:str=Query("jivo_oil")):
     for d in [30,60,90]:
         parts.append(f"""SELECT '{d} Days' AS "Period",
         COUNT(DISTINCT CASE WHEN B."ItemCode" IS NULL THEN M."ItemCode" END) AS "NotBilledSKUs",
-        ROUND(SUM(CASE WHEN B."ItemCode" IS NULL THEN W."OnHand"*M."LastPurPrc" ELSE 0 END),0) AS "NotBilledValue"
+        ROUND(SUM(CASE WHEN B."ItemCode" IS NULL THEN W."StockValue" ELSE 0 END),2) AS "NotBilledValue"
         FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
         LEFT JOIN (SELECT DISTINCT L."ItemCode" FROM {db}.OINV I JOIN {db}.INV1 L ON I."DocEntry"=L."DocEntry"
             WHERE I."CANCELED"='N' AND I."DocDate">=ADD_DAYS(CURRENT_DATE,-{d})) B ON M."ItemCode"=B."ItemCode"
@@ -282,8 +302,8 @@ def not_billed_by_subgroup(days:int=Query(30),item_type:str=Query(None),schema:s
     SELECT COALESCE(M."U_Sub_Group",'UNCLASSIFIED') AS "SubGroup",
         COUNT(DISTINCT M."ItemCode") AS "TotalSKUs",
         COUNT(DISTINCT CASE WHEN B."ItemCode" IS NULL THEN M."ItemCode" END) AS "NotBilledSKUs",
-        ROUND(SUM(CASE WHEN B."ItemCode" IS NULL THEN W."OnHand"*M."LastPurPrc" ELSE 0 END),0) AS "NotBilledValue",
-        ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "TotalValue"
+        ROUND(SUM(CASE WHEN B."ItemCode" IS NULL THEN W."StockValue" ELSE 0 END),2) AS "NotBilledValue",
+        ROUND(SUM(W."StockValue"),2) AS "TotalValue"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
     LEFT JOIN (SELECT DISTINCT L."ItemCode" FROM {db}.OINV I JOIN {db}.INV1 L ON I."DocEntry"=L."DocEntry"
         WHERE I."CANCELED"='N' {bill_filter}) B ON M."ItemCode"=B."ItemCode"
@@ -301,7 +321,7 @@ def not_billed(days:int=Query(30),subgroup:str=Query(None),item_type:str=Query(N
     return JSONResponse(content={"data":q(f"""
     SELECT G."ItmsGrpNam" AS "Category",M."ItemCode",M."ItemName",
         COALESCE(M."U_Sub_Group",'–') AS "SubGroup",COALESCE(M."U_TYPE",'–') AS "ItemType",
-        ROUND(SUM(W."OnHand"),0) AS "CurrentStock",ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "StockValue",
+        ROUND(SUM(W."OnHand"),2) AS "CurrentStock",ROUND(SUM(W."StockValue"),2) AS "StockValue",
         TO_DATE(LB."LastBillDate") AS "LastBillDate",
         CASE WHEN LB."LastBillDate" IS NULL THEN 'NEVER BILLED'
              ELSE CAST(DAYS_BETWEEN(LB."LastBillDate",CURRENT_DATE) AS VARCHAR)||' days ago' END AS "LastBilledAgo",
@@ -319,9 +339,9 @@ def not_billed(days:int=Query(30),subgroup:str=Query(None),item_type:str=Query(N
 
 def abc_inner(db):
     return f"""SELECT M."ItemCode",M."ItemName",COALESCE(M."U_Sub_Group",'UNCLASSIFIED') AS "SubGroup",COALESCE(M."U_TYPE",'–') AS "ItemType",
-    ROUND(SUM(W."OnHand"),0) AS "TotalOnHand",ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "StockValue",
-    ROW_NUMBER() OVER (ORDER BY SUM(W."OnHand"*M."LastPurPrc") DESC) AS "Rank",
-    ROUND(SUM(SUM(W."OnHand"*M."LastPurPrc")) OVER (ORDER BY SUM(W."OnHand"*M."LastPurPrc") DESC)/NULLIF(SUM(SUM(W."OnHand"*M."LastPurPrc")) OVER(),0)*100,2) AS "CumulativePct"
+    ROUND(SUM(W."OnHand"),2) AS "TotalOnHand",ROUND(SUM(W."StockValue"),2) AS "StockValue",
+    ROW_NUMBER() OVER (ORDER BY SUM(W."StockValue") DESC) AS "Rank",
+    ROUND(SUM(SUM(W."StockValue")) OVER (ORDER BY SUM(W."StockValue") DESC)/NULLIF(SUM(SUM(W."StockValue")) OVER(),0)*100,2) AS "CumulativePct"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
     WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' AND G."ItmsGrpNam"='FINISHED' AND W."OnHand">0 AND M."U_Sub_Group" NOT IN ('GIFT PACK')
     GROUP BY M."ItemCode",M."ItemName",M."U_Sub_Group",M."U_TYPE" """
@@ -387,7 +407,7 @@ def aging(category:str=Query(None),schema:str=Query("jivo_oil"),whs:str=Query(No
              WHEN DAYS_BETWEEN(FR."FirstDate",CURRENT_DATE)<=90 THEN '61-90'
              ELSE '90+' END AS "Bucket",
         COUNT(DISTINCT W."ItemCode"||'|'||W."WhsCode") AS "Items",
-        ROUND(SUM(W."OnHand"),0) AS "Qty",ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "Value"
+        ROUND(SUM(W."OnHand"),2) AS "Qty",ROUND(SUM(W."StockValue"),2) AS "Value"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
     JOIN (SELECT N."ItemCode",N."Warehouse",MIN(N."DocDate") AS "FirstDate" FROM {db}.OINM N WHERE N."InQty">0 GROUP BY N."ItemCode",N."Warehouse") FR
          ON W."ItemCode"=FR."ItemCode" AND W."WhsCode"=FR."Warehouse"
@@ -406,7 +426,7 @@ def aging_drill(bucket:str=Query("0-30"),category:str=Query(None),schema:str=Que
     SELECT G."ItmsGrpNam" AS "Category",W."ItemCode",M."ItemName",W."WhsCode",
         TO_DATE(FR."FirstDate") AS "FirstReceiptDate",
         DAYS_BETWEEN(FR."FirstDate",CURRENT_DATE) AS "DaysSitting",
-        ROUND(W."OnHand",0) AS "Qty",ROUND(W."OnHand"*M."LastPurPrc",0) AS "Value"
+        ROUND(W."OnHand",2) AS "Qty",ROUND(W."StockValue",2) AS "Value"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
     JOIN (SELECT N."ItemCode",N."Warehouse",MIN(N."DocDate") AS "FirstDate" FROM {db}.OINM N WHERE N."InQty">0 GROUP BY N."ItemCode",N."Warehouse") FR
          ON W."ItemCode"=FR."ItemCode" AND W."WhsCode"=FR."Warehouse"
@@ -434,7 +454,7 @@ def trace_items(category:str=Query("FINISHED"),subgroup:str=Query(None),schema:s
     return JSONResponse(content={"data":q(f"""
     SELECT M."ItemCode",M."ItemName",COALESCE(M."U_Sub_Group",'–') AS "SubGroup",
         COALESCE(M."U_TYPE",'–') AS "ItemType",
-        ROUND(COALESCE(SUM(W."OnHand"),0),0) AS "OnHand",ROUND(COALESCE(SUM(W."OnHand"*M."LastPurPrc"),0),0) AS "StockValue"
+        ROUND(COALESCE(SUM(W."OnHand"),0),0) AS "OnHand",ROUND(COALESCE(SUM(W."StockValue"),0),0) AS "StockValue"
     FROM {db}.OITM M JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
     LEFT JOIN {db}.OITW W ON M."ItemCode"=W."ItemCode"
     WHERE G."ItmsGrpNam"='{category.upper()}' AND M."InvntItem"='Y' AND M."U_Unit"='OIL' AND M."U_Sub_Group" IN ({valid}) {sg}
@@ -450,7 +470,7 @@ def trace_header(item:str=Query(""),schema:str=Query("jivo_oil")):
         G."ItmsGrpNam" AS "Category",ROUND(M."LastPurPrc",4) AS "LastPrice",
         ROUND(COALESCE(SUM(W."OnHand"),0),0) AS "TotalOnHand",
         ROUND(COALESCE(SUM(W."OnOrder"),0),0) AS "TotalOnOrder",
-        ROUND(COALESCE(SUM(W."OnHand"*M."LastPurPrc"),0),2) AS "StockValue"
+        ROUND(COALESCE(SUM(W."StockValue"),0),2) AS "StockValue"
     FROM {db}.OITM M JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
     LEFT JOIN {db}.OITW W ON M."ItemCode"=W."ItemCode"
     WHERE M."ItemCode"='{s}'
@@ -458,16 +478,20 @@ def trace_header(item:str=Query(""),schema:str=Query("jivo_oil")):
 
 @app.get("/api/trace_log")
 def trace_log(item:str=Query(""),days:int=Query(0),schema:str=Query("jivo_oil"),month:str=Query(None)):
-    db=get_schema(schema);s=safe(item)
+    import urllib.parse
+    item=urllib.parse.unquote(item)  # decode %2C commas from encodeURIComponent
+    db=get_schema(schema);s=safe(item).replace(",", "','")
     date_f=f"AND TO_CHAR(N.\"DocDate\",'YYYY-MM')='{safe(month)}'" if month else (f"AND N.\"DocDate\">=ADD_DAYS(CURRENT_DATE,-{days})" if days>0 else "")
     return JSONResponse(content={"data":q(f"""
     SELECT N."TransNum",N."TransType",CAST(N."BASE_REF" AS VARCHAR(50)) AS "BaseRef",
         TO_DATE(N."DocDate") AS "DocDate",N."CardName",N."JrnlMemo",N."Comments",
         ROUND(N."InQty",3) AS "InQty",ROUND(N."OutQty",3) AS "OutQty",
         ROUND(N."Price",4) AS "Price",ROUND(N."TransValue",2) AS "TransValue",
-        N."Warehouse",COALESCE(H."WhsName",N."Warehouse") AS "WhsName",ROUND(N."Balance",3) AS "Balance"
+        N."Warehouse",COALESCE(H."WhsName",N."Warehouse") AS "WhsName",ROUND(N."Balance",3) AS "Balance",
+        M."ItemName", N."ItemCode"
     FROM {db}.OINM N LEFT JOIN {db}.OWHS H ON N."Warehouse"=H."WhsCode"
-    WHERE N."ItemCode"='{s}' AND N."TransType" NOT IN (14,16) {date_f}
+    LEFT JOIN {db}.OITM M ON N."ItemCode"=M."ItemCode"
+    WHERE N."ItemCode" IN ('{s}') AND N."TransType" NOT IN (14,16) {date_f}
     ORDER BY N."DocDate" DESC,N."TransNum" DESC""")})
 
 @app.get("/api/trace_returns")
@@ -554,17 +578,17 @@ def pm_summary(item:str=Query(""),schema:str=Query("jivo_oil"),period:int=Query(
         ROUND(SUM(CASE WHEN N."InQty">0 AND ({before_p}) THEN N."InQty" ELSE 0 END)
              -SUM(CASE WHEN N."OutQty">0 AND ({before_p}) THEN N."OutQty" ELSE 0 END),0) AS "OpeningQty",
         ROUND(SUM(CASE WHEN N."InQty">0 AND ({before_p}) THEN N."InQty"*N."Price" ELSE 0 END)
-             -SUM(CASE WHEN N."OutQty">0 AND ({before_p}) THEN N."OutQty"*N."Price" ELSE 0 END),0) AS "OpeningValue",
-        ROUND(SUM(CASE WHEN N."InQty">0 AND N."TransType" IN (20,67) {in_p} THEN N."InQty" ELSE 0 END),0) AS "PurchaseQty",
-        ROUND(SUM(CASE WHEN N."InQty">0 AND N."TransType" IN (20,67) {in_p} THEN N."InQty"*N."Price" ELSE 0 END),0) AS "PurchaseValue",
+             -SUM(CASE WHEN N."OutQty">0 AND ({before_p}) THEN N."OutQty"*N."Price" ELSE 0 END),2) AS "OpeningValue",
+        ROUND(SUM(CASE WHEN N."InQty">0 AND N."TransType" IN (20,59,202) {in_p} THEN N."InQty" ELSE 0 END),0) AS "PurchaseQty",
+        ROUND(SUM(CASE WHEN N."InQty">0 AND N."TransType" IN (20,59,202) {in_p} THEN N."InQty"*N."Price" ELSE 0 END),2) AS "PurchaseValue",
         ROUND(SUM(CASE WHEN N."OutQty">0 AND N."TransType" IN (60,202) {in_p} THEN N."OutQty" ELSE 0 END),0) AS "ConsumptionQty",
-        ROUND(SUM(CASE WHEN N."OutQty">0 AND N."TransType" IN (60,202) {in_p} THEN N."OutQty"*N."Price" ELSE 0 END),0) AS "ConsumptionValue",
+        ROUND(SUM(CASE WHEN N."OutQty">0 AND N."TransType" IN (60,202) {in_p} THEN N."OutQty"*N."Price" ELSE 0 END),2) AS "ConsumptionValue",
         ROUND(SUM(CASE WHEN N."OutQty">0 AND N."TransType" IN (60,202)
             AND N."DocDate">=ADD_MONTHS(CURRENT_DATE,-3) THEN N."OutQty" ELSE 0 END),0) AS "Last3M",
         ROUND(SUM(CASE WHEN N."OutQty">0 AND N."TransType" IN (60,202)
             AND N."DocDate">=ADD_MONTHS(CURRENT_DATE,-6)
             AND N."DocDate"<ADD_MONTHS(CURRENT_DATE,-3) THEN N."OutQty" ELSE 0 END),0) AS "Prev3M"
-    FROM {db}.OINM N WHERE N."ItemCode"='{s}'""")
+    FROM {db}.OINM N WHERE N."ItemCode"='{s}' AND N."Warehouse"!='BH-PP'""")
     bil=q(f"""
     SELECT COALESCE(COUNT(DISTINCT I."DocNum"),0) AS "InvoiceCount",
            ROUND(COALESCE(SUM(L."Quantity"),0),0) AS "BilledQty",
@@ -574,13 +598,13 @@ def pm_summary(item:str=Query(""),schema:str=Query("jivo_oil"),period:int=Query(
     WHERE L."ItemCode"='{s}' AND I."CANCELED"='N' {bill_p}""")
     cls=q(f"""
     SELECT ROUND(COALESCE(SUM(W."OnHand"),0),0) AS "ClosingQty",
-           ROUND(COALESCE(SUM(W."OnHand"*M."LastPurPrc"),0),0) AS "ClosingValue"
+           ROUND(COALESCE(SUM(W."OnHand"*M."LastPurPrc"),0),2) AS "ClosingValue"
     FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode"
-    WHERE W."ItemCode"='{s}'""")
+    WHERE W."ItemCode"='{s}' AND W."WhsCode"!='BH-PP'""")
     whs=q(f"""
-    SELECT W."WhsCode", WH."WhsName", ROUND(W."OnHand",0) AS "OnHand"
+    SELECT W."WhsCode", WH."WhsName", ROUND(W."OnHand",2) AS "OnHand"
     FROM {db}.OITW W JOIN {db}.OWHS WH ON W."WhsCode"=WH."WhsCode"
-    WHERE W."ItemCode"='{s}' AND W."OnHand"!=0
+    WHERE W."ItemCode"='{s}' AND W."OnHand"!=0 AND W."WhsCode"!='BH-PP'
     ORDER BY W."OnHand" DESC""")
     warehouses=[{"WhsCode":r["WhsCode"],"WhsName":r["WhsName"],"OnHand":round(float(r.get("OnHand") or 0),0)} for r in whs]
     return JSONResponse(content={
@@ -597,37 +621,63 @@ def fg_pm_summary(item:str=Query(""),schema:str=Query("jivo_oil"),period:int=Que
         in_p=f'AND N."DocDate" >= ADD_MONTHS(CURRENT_DATE,{-period})'
     else:
         before_p='1=0';in_p=''
-    r=q(f"""
-    SELECT FG."FGCode",FG."FGName",FG."SubGroup",FG."QtyPerUnit",
-           ROUND(SUM(CASE WHEN N."InQty">0 AND ({before_p}) THEN N."InQty" ELSE 0 END)
-                -SUM(CASE WHEN N."OutQty">0 AND ({before_p}) THEN N."OutQty" ELSE 0 END),0) AS "OpeningQty",
-           ROUND(SUM(CASE WHEN N."InQty">0 {in_p} THEN N."InQty" ELSE 0 END),0) AS "ProductionQty",
-           ROUND(SUM(CASE WHEN N."InQty">0 AND N."TransType"=101 {in_p} THEN N."InQty" ELSE 0 END),0) AS "ProdSpecQty",
-           ROUND(SUM(CASE WHEN N."InQty">0 AND N."TransType" IN (20,67) {in_p} THEN N."InQty" ELSE 0 END),0) AS "GRQty",
-           ROUND(SUM(CASE WHEN N."OutQty">0 {in_p} THEN N."OutQty" ELSE 0 END),0) AS "ARInvoiceQty",
-           ROUND(SUM(CASE WHEN N."OutQty">0 AND N."TransType"=13 {in_p} THEN N."OutQty" ELSE 0 END),0) AS "ARSpecQty",
-           (SELECT ROUND(COALESCE(SUM(W."OnHand"),0),0)
-            FROM {db}.OITW W WHERE W."ItemCode"=FG."FGCode") AS "ClosingQty",
-           (SELECT ROUND(COALESCE(SUM(W2."OnHand"*M2."LastPurPrc"),0),0)
-            FROM {db}.OITW W2 JOIN {db}.OITM M2 ON W2."ItemCode"=M2."ItemCode"
-            WHERE W2."ItemCode"=FG."FGCode") AS "ClosingValue"
-    FROM (
+    fgs_query = """
         SELECT L."Father" AS "FGCode",M."ItemName" AS "FGName",
                COALESCE(M."U_Sub_Group",'–') AS "SubGroup",
                ROUND(SUM(L."Quantity"),4) AS "QtyPerUnit"
         FROM {db}.ITT1 L JOIN {db}.OITM M ON L."Father"=M."ItemCode"
         WHERE L."Code"='{s}'
         GROUP BY L."Father",M."ItemName",M."U_Sub_Group"
-    ) FG
-    LEFT JOIN {db}.OINM N ON FG."FGCode"=N."ItemCode"
-    GROUP BY FG."FGCode",FG."FGName",FG."SubGroup",FG."QtyPerUnit"
-    ORDER BY "ClosingQty" DESC""")
+    """.replace("{db}", db).replace("{s}", s)
+    fgs = list(q(fgs_query))
+    
+    if not fgs:
+        return JSONResponse(content={"totals":{}, "items":[]})
+        
+    fg_in = "','".join([safe(f["FGCode"]) for f in fgs])
+    
+    r_query = """
+    SELECT N."ItemCode" AS "FGCode",
+           ROUND(SUM(CASE WHEN N."InQty">0 AND ({before_p}) AND N."Warehouse"!='BH-PP' THEN N."InQty" ELSE 0 END)
+                -SUM(CASE WHEN N."OutQty">0 AND ({before_p}) AND N."Warehouse"!='BH-PP' THEN N."OutQty" ELSE 0 END),0) AS "OpeningQty",
+           ROUND(SUM(CASE WHEN N."InQty">0 AND N."TransType" IN (59,101,202) {in_p} AND N."Warehouse"!='BH-PP' THEN N."InQty" ELSE 0 END),0) AS "ProductionQty",
+           ROUND(SUM(CASE WHEN N."InQty">0 AND N."TransType" IN (59,101) {in_p} AND N."Warehouse"!='BH-PP' THEN N."InQty" ELSE 0 END),0) AS "ProdSpecQty",
+           ROUND(SUM(CASE WHEN N."InQty">0 AND N."TransType" IN (20,59,101,202) {in_p} AND N."Warehouse"!='BH-PP' THEN N."InQty" ELSE 0 END),0) AS "GRQty",
+           ROUND(SUM(CASE WHEN N."OutQty">0 AND N."TransType"!=67 {in_p} AND N."Warehouse"!='BH-PP' THEN N."OutQty" ELSE 0 END),0) AS "ARInvoiceQty",
+           ROUND(SUM(CASE WHEN N."OutQty">0 AND N."TransType"=13 {in_p} AND N."Warehouse"!='BH-PP' THEN N."OutQty" ELSE 0 END),0) AS "ARSpecQty",
+           (SELECT ROUND(COALESCE(SUM(W."OnHand"),0),0)
+            FROM {db}.OITW W WHERE W."ItemCode"=N."ItemCode" AND W."WhsCode"!='BH-PP') AS "ClosingQty",
+           (SELECT ROUND(COALESCE(SUM(W2."OnHand"*M2."LastPurPrc"),0),0)
+            FROM {db}.OITW W2 JOIN {db}.OITM M2 ON W2."ItemCode"=M2."ItemCode"
+            WHERE W2."ItemCode"=N."ItemCode") AS "ClosingValue"
+    FROM {db}.OINM N
+    WHERE N."ItemCode" IN ('{fg_in}')
+    GROUP BY N."ItemCode"
+    """.replace("{db}", db).replace("{before_p}", before_p).replace("{in_p}", in_p).replace("{fg_in}", fg_in)
+    r = list(q(r_query))
+    
+    n_map = {row["FGCode"]: row for row in r}
+    items = []
+    for f in fgs:
+        n_data = n_map.get(f["FGCode"], {})
+        f.update({
+            "OpeningQty": n_data.get("OpeningQty", 0),
+            "ProductionQty": n_data.get("ProductionQty", 0),
+            "ProdSpecQty": n_data.get("ProdSpecQty", 0),
+            "GRQty": n_data.get("GRQty", 0),
+            "ARInvoiceQty": n_data.get("ARInvoiceQty", 0),
+            "ARSpecQty": n_data.get("ARSpecQty", 0),
+            "ClosingQty": n_data.get("ClosingQty", 0),
+            "ClosingValue": n_data.get("ClosingValue", 0)
+        })
+        items.append(f)
+        
+    items.sort(key=lambda x: -(x.get("ClosingQty") or 0))
     # Add per-FG warehouse breakdown
-    items=list(r)
     if items:
         fg_in="','".join([safe(i["FGCode"]) for i in items])
         whs=q(f"""
-        SELECT W."ItemCode" AS "FGCode",W."WhsCode",WH."WhsName",ROUND(W."OnHand",0) AS "OnHand"
+        SELECT W."ItemCode" AS "FGCode",W."WhsCode",WH."WhsName",ROUND(W."OnHand",2) AS "OnHand"
         FROM {db}.OITW W JOIN {db}.OWHS WH ON W."WhsCode"=WH."WhsCode"
         WHERE W."ItemCode" IN ('{fg_in}') AND W."OnHand"!=0
         ORDER BY W."OnHand" DESC""")
@@ -643,7 +693,7 @@ def fg_pm_summary(item:str=Query(""),schema:str=Query("jivo_oil"),period:int=Que
     totals={"OpeningQty":0,"ProductionQty":0,"ProdSpecQty":0,"GRQty":0,"ARInvoiceQty":0,"ARSpecQty":0,"ClosingQty":0,"ClosingValue":0}
     for row in items:
         for k in totals: totals[k]+=float(row.get(k) or 0)
-    for k in totals: totals[k]=round(totals[k],0)
+    for k in totals: totals[k]=round(totals[k],2)
     return JSONResponse(content={"totals":totals,"items":items})
 
 @app.get("/api/planning")
@@ -663,7 +713,7 @@ def planning(subgroup:str=Query(None),item_type:str=Query(None),schema:str=Query
         GROUP BY N."ItemCode"
     )
     SELECT M."ItemCode",M."ItemName",COALESCE(M."U_Sub_Group",'–') AS "SubGroup",COALESCE(M."U_TYPE",'–') AS "ItemType",
-        ROUND(SUM(W."OnHand"),0) AS "TotalOnHand",ROUND(SUM(W."OnHand"*M."LastPurPrc"),0) AS "StockValue",
+        ROUND(SUM(W."OnHand"),2) AS "TotalOnHand",ROUND(SUM(W."OnHand"*M."LastPurPrc"),2) AS "StockValue",
         ROUND(COALESCE(C."Out30d",0),0) AS "Out30d",ROUND(COALESCE(C."Out30_60d",0),0) AS "Out30_60d",
         ROUND(COALESCE(C."Out90d",0)/90,1) AS "AvgDailyOut",ROUND(COALESCE(C."Out90d",0)/3,0) AS "AvgMonthlyOut",
         CASE WHEN COALESCE(C."Out90d",0)=0 THEN -1
@@ -705,7 +755,7 @@ async def chat(request:Request):
 @app.get("/",response_class=HTMLResponse)
 async def serve():
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),"templates","dashboard_oils.html"),"r",encoding="utf-8") as f:
-        return HTMLResponse(content=f.read())
+        return HTMLResponse(content=f.read(), headers={"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"})
 
 @app.get("/conveyor",response_class=HTMLResponse)
 async def conveyor():
@@ -713,4 +763,4 @@ async def conveyor():
         return HTMLResponse(content=f.read())
 
 if __name__=="__main__":
-    uvicorn.run(app,host="0.0.0.0",port=8004)
+    uvicorn.run(app,host="localhost",port=8004)

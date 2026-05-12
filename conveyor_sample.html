@@ -578,7 +578,7 @@ body { background: #f1f5f9; font-family: 'Segoe UI', sans-serif; overflow: hidde
 
   <div class="status-bar"><div class="status-dot" id="sDot"></div><span id="sTxt">Initializing…</span></div>
   <div class="info-bar">
-    <div class="info-brand"><span>Jivo</span> Oil Filling Line — Live</div>
+    <div class="info-brand"><span>Jivo</span> <span id="infoBrandText">Oil</span> Filling Line — Live</div>
     <div class="info-stat"><span class="pulse-dot"></span>Line Active · 6-Head Filler · 1,200 btl/hr</div>
   </div>
 </div>
@@ -615,8 +615,8 @@ buildBottles();
 
 // ── COLOR VARIANTS ────────────────────────────────────────────────────
 const colors = {
-  oil:   { liq:'linear-gradient(180deg,rgba(255,215,40,0.95),rgba(205,135,10,1))',   cap:'linear-gradient(180deg,#cc3333,#991111)', lbl:'#7a3d00', bg:'linear-gradient(135deg,#fff8e0,#ffd860)', txt:'JIVO<br>OIL',    stream:'linear-gradient(180deg,rgba(255,215,30,1),rgba(205,135,10,0.5),transparent)', nozzle:'#eab308' },
-  water: { liq:'linear-gradient(180deg,rgba(100,185,255,0.92),rgba(40,120,225,0.97))',cap:'linear-gradient(180deg,#3b82f6,#2563eb)', lbl:'#003080', bg:'linear-gradient(135deg,#dff0ff,#9fd0ff)', txt:'JIVO<br>WATER',  stream:'linear-gradient(180deg,rgba(100,200,255,1),rgba(40,120,225,0.5),transparent)', nozzle:'#3b82f6' },
+  oil:   { liq:'linear-gradient(180deg,rgba(255,215,40,0.95),rgba(205,135,10,1))',   cap:'linear-gradient(180deg,#cc3333,#991111)', lbl:'#7a3d00', bg:'linear-gradient(135deg,#fff8e0,#ffd860)', txt:'JIVO<br>OIL',    brand:'Oil',    stream:'linear-gradient(180deg,rgba(255,215,30,1),rgba(205,135,10,0.5),transparent)', nozzle:'#eab308' },
+  water: { liq:'linear-gradient(180deg,rgba(100,185,255,0.92),rgba(40,120,225,0.97))',cap:'linear-gradient(180deg,#3b82f6,#2563eb)', lbl:'#003080', bg:'linear-gradient(135deg,#dff0ff,#9fd0ff)', txt:'JIVO<br>WATER',  brand:'Beverage', stream:'linear-gradient(180deg,rgba(100,200,255,1),rgba(40,120,225,0.5),transparent)', nozzle:'#3b82f6' },
   juice: { liq:'linear-gradient(180deg,rgba(255,135,28,0.95),rgba(218,78,8,1))',      cap:'linear-gradient(180deg,#ee8800,#cc6600)', lbl:'#7a2a00', bg:'linear-gradient(135deg,#fff0d0,#ffcc78)', txt:'JIVO<br>JUICE',  stream:'linear-gradient(180deg,rgba(255,150,50,1),rgba(218,80,10,0.5),transparent)', nozzle:'#ee8800' },
   green: { liq:'linear-gradient(180deg,rgba(55,200,115,0.95),rgba(18,138,66,1))',     cap:'linear-gradient(180deg,#22c55e,#16a34a)', lbl:'#003a1a', bg:'linear-gradient(135deg,#d0ffe0,#80ffa8)', txt:'JIVO<br>BEV',    stream:'linear-gradient(180deg,rgba(50,220,100,1),rgba(10,120,50,0.5),transparent)', nozzle:'#22c55e' },
 };
@@ -630,6 +630,8 @@ function applyColor(t) {
   document.querySelectorAll('.bottle-label').forEach(el => {
     el.style.background = c.bg; el.style.color = c.lbl; el.innerHTML = c.txt;
   });
+  const ibt = document.getElementById('infoBrandText');
+  if (ibt) ibt.textContent = c.brand;
 }
 function setColor(t, e) {
   document.querySelectorAll('.variant-btn').forEach(b => b.classList.remove('on'));
