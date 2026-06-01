@@ -286,7 +286,7 @@ select.filter-sel{padding:5px 10px;border:2px solid var(--bd);border-radius:18px
    <button class="pl" data-c="TRADING ITEMS">Trading</button>
    <button class="pl" data-c="GIFT PACK">Gift Pack</button>
   </div>
-  <button class="btn" onclick="load()">↻ Refresh</button>
+  <button class="btn" onclick="refresh()">↻ Refresh</button>
   <div class="sep"></div>
   <button id="lockBtn" onclick="toggleLock()" title="Click to login" style="padding:5px 12px;font-size:13px;background:transparent;border:1.5px solid var(--bd);border-radius:10px;cursor:pointer;font-family:var(--font);color:var(--mt);transition:.15s;" onmouseenter="this.style.borderColor='var(--ac)';this.style.color='var(--ac)'" onmouseleave="this.style.borderColor='var(--bd)';this.style.color='var(--mt)'">🔒</button>
  </div>
@@ -656,26 +656,55 @@ function typBadge(t,n){const e=reclassifyType(t,n);if(!e||e==='–')return'';ret
 function moBadge(s){const m={'NON-MOVING':'b-d','SLOW':'b-w','MEDIUM':'b-i','FAST':'b-ok'};return`<span class="bd ${m[s]||'b-i'}">${s}</span>`}
 function trendBadge(t){if(!t)return'';const m={RISING:'trend-r',FALLING:'trend-f',STABLE:'trend-s',FLAT:'trend-flat'};const i={RISING:'↑',FALLING:'↓',STABLE:'→',FLAT:'—'};return`<span class="${m[t]||'trend-flat'}">${i[t]||''} ${t}</span>`}
 
+// ── Client-side response cache ────────────────────────────────────────────
+// Switching back to a tab reuses the last response instead of re-fetching.
+// Keyed by the stable URL (no _t buster). Filter changes change the URL, so
+// they always miss → fresh fetch. The ↻ Refresh button bypasses + clears it.
+const _apiCache = new Map();
+const API_TTL = 120000;            // 2 min (< server cache TTL of 5 min)
+let _forceFresh = false;
+function clearApiCache(){ _apiCache.clear(); }
 async function api(u){
   const sep=u.includes('?')?'&':'?';
-  const url1='/'+DIVISION+u+sep+'schema='+SCH+'&_t='+Date.now();
-  const url2=u+sep+'schema='+SCH+'&_t='+Date.now();
+  const key='/'+DIVISION+u+sep+'schema='+SCH;
+  const fb=u+sep+'schema='+SCH;
+  if(!_forceFresh){
+    const c=_apiCache.get(key);
+    if(c && (Date.now()-c.t)<API_TTL) return c.data;
+  }
+  const bust='&_t='+Date.now();
   try {
-    let r = await fetch(url1,{cache:'no-store'});
-    if(!r.ok) r = await fetch(url2,{cache:'no-store'});
+    let r = await fetch(key+bust,{cache:'no-store'});
+    if(!r.ok) r = await fetch(fb+bust,{cache:'no-store'});
     const d = await r.json();
-    return d.data || [];
+    const data = d.data || [];
+    _apiCache.set(key,{t:Date.now(),data});
+    return data;
   } catch(e) { return []; }
 }
 async function apiObj(u){
   const sep=u.includes('?')?'&':'?';
-  const url1='/'+DIVISION+u+sep+'schema='+SCH+'&_t='+Date.now();
-  const url2=u+sep+'schema='+SCH+'&_t='+Date.now();
+  const key='/'+DIVISION+u+sep+'schema='+SCH;
+  const fb=u+sep+'schema='+SCH;
+  if(!_forceFresh){
+    const c=_apiCache.get('OBJ:'+key);
+    if(c && (Date.now()-c.t)<API_TTL) return c.data;
+  }
+  const bust='&_t='+Date.now();
   try {
-    let r = await fetch(url1,{cache:'no-store'});
-    if(!r.ok) r = await fetch(url2,{cache:'no-store'});
-    return await r.json();
+    let r = await fetch(key+bust,{cache:'no-store'});
+    if(!r.ok) r = await fetch(fb+bust,{cache:'no-store'});
+    const d = await r.json();
+    _apiCache.set('OBJ:'+key,{t:Date.now(),data:d});
+    return d;
   } catch(e) { return null; }
+}
+// Forced refresh: drop the client cache and re-run the current tab fresh.
+function refresh(){
+  clearApiCache();
+  _forceFresh=true;
+  try { Promise.resolve(load()).finally(()=>{ _forceFresh=false; }); }
+  catch(e){ _forceFresh=false; }
 }
 function dc(i){if(ch[i]){ch[i].destroy();delete ch[i]}}
 function mc(i,c){dc(i);const x=document.getElementById(i);if(!x)return;ch[i]=new Chart(x.getContext('2d'),c)}

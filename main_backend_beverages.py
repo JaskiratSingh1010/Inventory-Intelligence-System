@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from hdbcli import dbapi
 from dotenv import load_dotenv
 from cache_manager import cache, cache_result
+from db_pool import pool
 
 load_dotenv()
 
@@ -41,21 +42,6 @@ BEV_RM_VALID = ("'LAB','READY SYRUP','FLAVOUR','READY UNITS','SALTS','CIP',"
 
 GIFT_EXCL = "AND M.\"U_Sub_Group\" NOT IN ('GIFT PACK')"
 
-# Connection settings
-_CONN_PARAMS = dict(address='192.168.1.182', port=30015, user='DATA1', password='Jivo@1989')
-
-def conn():
-    for ip in ['192.168.1.182', '103.89.45.192']:
-        try:
-            print(f"Connecting to SAP HANA (Beverages) at {ip}...")
-            c = dbapi.connect(address=ip, port=30015, user='DATA1', password='Jivo@1989')
-            print(f"Connected to SAP HANA (Beverages) at {ip} successfully.")
-            return c
-        except Exception as e:
-            print(f"Failed to connect to {ip}: {str(e)}")
-    print("CRITICAL: All SAP HANA connection attempts failed.")
-    raise Exception("Could not connect to any SAP HANA IP.")
-
 def cv(v):
     if v is None: return None
     try:
@@ -80,9 +66,14 @@ def cv(v):
     return str(v)
 
 def q(sql):
-    c = None
+    cache_key = cache._make_key('sql', sql=sql)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    c = None; broken = False; cur = None
     try:
-        c = conn()
+        c = pool.acquire()
         cur = c.cursor()
         cur.execute(sql)
         cols = [d[0] for d in cur.description]
@@ -93,14 +84,19 @@ def q(sql):
             for col, val in zip(cols, row):
                 rec[col] = cv(val)
             result.append(rec)
+        cache.set(cache_key, result, ttl=300)
         return result
     except:
         traceback.print_exc()
+        try: broken = (c is None) or (not c.isconnected())
+        except Exception: broken = True
         return []
     finally:
-        if c:
-            try: c.close()
-            except: pass
+        if cur is not None:
+            try: cur.close()
+            except Exception: pass
+        if c is not None:
+            pool.release(c, broken=broken)
 
 def cf(c):
     if c and c.upper() in ('FINISHED', 'RAW MATERIAL', 'PACKAGING MATERIAL'):
@@ -989,6 +985,35 @@ async def serve():
 async def conveyor():
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "conveyor_sample.html"), "r", encoding="utf-8") as f:
         return HTMLResponse(content=f.read())
+
+# ── Startup warm-up ─────────────────────────────────────────────────────────
+# Pre-open pool connections and run the queries the dashboard fires on first
+# paint, so the first tab load is cache-served instead of a cold round-trip.
+# Runs in a daemon thread; wrapped so a HANA outage at boot can't crash boot.
+def _warmup():
+    try:
+        pool.warm()
+    except Exception:
+        traceback.print_exc()
+    tasks = [
+        lambda: kpi(category=None, whs=None),
+        lambda: categories(category=None),
+        lambda: warehouses(),
+        lambda: warehouse_summary(category=None, owner=None),
+        lambda: movers_summary(days=30, category=None),
+        lambda: movers_by_subgroup(days=30, category=None),
+        lambda: not_billed_summary(),
+        lambda: aging(category=None, whs=None),
+        lambda: abcxyz_summary(),
+    ]
+    for fn in tasks:
+        try: fn()
+        except Exception: traceback.print_exc()
+    print("[Beverages] warm-up complete")
+
+if os.getenv("WARMUP_ON_START", "1") == "1":
+    import threading as _t
+    _t.Thread(target=_warmup, daemon=True).start()
 
 if __name__ == "__main__":
     uvicorn.run(app, host="localhost", port=8006)

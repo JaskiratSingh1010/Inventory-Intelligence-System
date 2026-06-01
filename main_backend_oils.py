@@ -9,6 +9,7 @@ from fastapi.staticfiles import StaticFiles
 from hdbcli import dbapi
 from dotenv import load_dotenv
 from cache_manager import cache, cache_result
+from db_pool import pool
 
 load_dotenv()
 
@@ -25,17 +26,6 @@ if os.path.isdir(_static_dir):
 
 SCHEMAS = {"jivo_oil": "JIVO_OIL_HANADB", "jivo_mart": "JIVO_MART_HANADB"}
 def get_schema(s): return SCHEMAS.get(s, "JIVO_OIL_HANADB")
-def conn():
-    for ip in ['192.168.1.182', '103.89.45.192']:
-        try:
-            print(f"Connecting to SAP HANA (Oils) at {ip}...")
-            c = dbapi.connect(address=ip, port=30015, user='DATA1', password='Jivo@1989')
-            print(f"Connected to SAP HANA (Oils) at {ip} successfully.")
-            return c
-        except Exception as e:
-            print(f"Failed to connect to {ip}: {str(e)}")
-    print("CRITICAL: All SAP HANA connection attempts (Oils) failed.")
-    raise Exception("Could not connect to any SAP HANA IP.")
 
 def cv(v):
     if v is None: return None
@@ -49,20 +39,30 @@ def cv(v):
     return str(v) if not isinstance(v, str) else v
 
 def q(sql):
-    c = None
+    cache_key = cache._make_key('sql', sql=sql)
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return cached
+
+    c = None; broken = False
     try:
-        c = conn()
+        c = pool.acquire()
         df = pd.read_sql(sql, c)
         for col in df.select_dtypes(include=['datetime64[ns]', 'datetime64']).columns:
             df[col] = df[col].apply(lambda x: x.strftime("%Y-%m-%d") if pd.notna(x) else None)
-        return [{k: cv(v) for k, v in r.items()} for r in df.to_dict(orient="records")]
+        result = [{k: cv(v) for k, v in r.items()} for r in df.to_dict(orient="records")]
+        cache.set(cache_key, result, ttl=300)
+        return result
     except:
         traceback.print_exc()
+        # Only discard the connection if it actually dropped; a plain SQL
+        # error leaves the connection usable.
+        try: broken = (c is None) or (not c.isconnected())
+        except Exception: broken = True
         return []
     finally:
-        if c:
-            try: c.close()
-            except: pass
+        if c is not None:
+            pool.release(c, broken=broken)
 
 # GIFT PACK removed from both lists
 FG_VALID = ("'OLIVE','CANOLA','MUSTARD','SEEDS','SOYABEAN','SUNFLOWER',"
@@ -103,12 +103,17 @@ OWN_JOIN = 'LEFT JOIN {db}.OUSR U ON CAST({tbl}."U_Owner" AS VARCHAR(20))=CAST(U
 @app.get("/api/kpi")
 def kpi(category:str=Query(None),schema:str=Query("jivo_oil"),whs:str=Query(None)):
     db=get_schema(schema);f=cf(category);wf_=wf(whs)
+    # TotalQty / TotalValue / TotalSKUs share one scan (same filters, OnHand>0);
+    # OutOfStockSKUs needs different semantics (no OnHand>0, net HAVING<=0) so
+    # it stays a separate scan. 4 scans -> 2.
     return JSONResponse(content={"data":q(f"""SELECT
-    ROUND((SELECT SUM(W."OnHand") FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod" WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."OnHand">0 {wf_} {GIFT_EXCL}),2) AS "TotalQty",
-    ROUND(COALESCE((SELECT SUM(W."StockValue") FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod" WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."OnHand">0 {wf_} {GIFT_EXCL}),0),2) AS "TotalValue",
-    (SELECT COUNT(DISTINCT W."ItemCode") FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod" WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."OnHand">0 {wf_} {GIFT_EXCL}) AS "TotalSKUs",
+    ROUND(BASE."TotalQty",2) AS "TotalQty",
+    ROUND(COALESCE(BASE."TotalValue",0),2) AS "TotalValue",
+    BASE."TotalSKUs" AS "TotalSKUs",
     (SELECT COUNT(*) FROM (SELECT M."ItemCode" FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod" WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} {wf_} {GIFT_EXCL} GROUP BY M."ItemCode" HAVING SUM(W."OnHand")<=0)) AS "OutOfStockSKUs"
-    FROM DUMMY""")})
+    FROM (SELECT SUM(W."OnHand") AS "TotalQty", SUM(W."StockValue") AS "TotalValue", COUNT(DISTINCT W."ItemCode") AS "TotalSKUs"
+          FROM {db}.OITW W JOIN {db}.OITM M ON W."ItemCode"=M."ItemCode" JOIN {db}.OITB G ON M."ItmsGrpCod"=G."ItmsGrpCod"
+          WHERE M."InvntItem"='Y' AND M."U_Unit"='OIL' {f} AND W."OnHand">0 {wf_} {GIFT_EXCL}) BASE""")})
 
 @app.get("/api/categories")
 def categories(schema:str=Query("jivo_oil")):
@@ -761,6 +766,39 @@ async def serve():
 async def conveyor():
     with open(os.path.join(os.path.dirname(os.path.abspath(__file__)),"conveyor_sample.html"),"r",encoding="utf-8") as f:
         return HTMLResponse(content=f.read())
+
+# ── Startup warm-up ─────────────────────────────────────────────────────────
+# Pre-open pool connections and run the queries the dashboard fires on its
+# first paint, so the very first tab load is served from cache instead of a
+# cold remote round-trip. Runs in a daemon thread so it never blocks boot, and
+# is wrapped so a HANA outage at startup can't crash the server.
+def _warmup():
+    import threading as _t
+    try:
+        pool.warm()
+    except Exception:
+        traceback.print_exc()
+    # Each entry must use explicit args — FastAPI Query() defaults are not
+    # plain values when these functions are called directly.
+    tasks = [
+        lambda: kpi(category=None, schema="jivo_oil", whs=None),
+        lambda: categories(schema="jivo_oil"),
+        lambda: warehouses(schema="jivo_oil"),
+        lambda: warehouse_summary(category=None, schema="jivo_oil", owner=None),
+        lambda: movers_summary(days=30, category=None, schema="jivo_oil"),
+        lambda: movers_by_subgroup(days=30, item_type=None, category=None, schema="jivo_oil"),
+        lambda: not_billed_summary(schema="jivo_oil"),
+        lambda: aging(category=None, schema="jivo_oil", whs=None),
+        lambda: abcxyz_summary(schema="jivo_oil"),
+    ]
+    for fn in tasks:
+        try: fn()
+        except Exception: traceback.print_exc()
+    print("[Oils] warm-up complete")
+
+if os.getenv("WARMUP_ON_START", "1") == "1":
+    import threading as _t
+    _t.Thread(target=_warmup, daemon=True).start()
 
 if __name__=="__main__":
     uvicorn.run(app,host="localhost",port=8004)

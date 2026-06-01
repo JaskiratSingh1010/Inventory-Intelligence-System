@@ -10,6 +10,7 @@ from fastapi.middleware.gzip import GZipMiddleware
 from hdbcli import dbapi
 from dotenv import load_dotenv
 from cache_manager import cache  # cache_result removed: incompatible with FastAPI route injection
+from db_pool import pool
 
 load_dotenv()
 
@@ -23,16 +24,6 @@ _static_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "static")
 if os.path.isdir(_static_dir):
     app.mount("/static", StaticFiles(directory=_static_dir), name="static")
 
-def conn():
-    for ip in ['192.168.1.182', '103.89.45.192']:
-        try:
-            # Short timeout for faster failover
-            c = dbapi.connect(address=ip, port=30015, user='DATA1', password='Jivo@1989', connectTimeout=5000)
-            return c
-        except Exception as e:
-            print(f"Failed to connect to {ip}: {str(e)}")
-    raise Exception("Could not connect to any SAP HANA IP.")
-
 def cv(v):
     if v is None: return None
     try:
@@ -45,9 +36,9 @@ def cv(v):
     return str(v)
 
 def q(sql):
-    c = None
+    c = None; broken = False; cur = None
     try:
-        c = conn()
+        c = pool.acquire()
         cur = c.cursor()
         cur.execute(sql)
         cols = [d[0] for d in cur.description]
@@ -61,11 +52,15 @@ def q(sql):
         return result
     except:
         traceback.print_exc()
+        try: broken = (c is None) or (not c.isconnected())
+        except Exception: broken = True
         return []
     finally:
-        if c:
-            try: c.close()
-            except: pass
+        if cur is not None:
+            try: cur.close()
+            except Exception: pass
+        if c is not None:
+            pool.release(c, broken=broken)
 
 def get_base_queries(date_filter, owor_date_filter=None):
     """Returns subqueries with date filters pushed down for performance.
